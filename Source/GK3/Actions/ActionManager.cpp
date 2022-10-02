@@ -1,6 +1,7 @@
 #include "ActionManager.h"
 
 #include <cassert>
+#include <cstring>
 
 #include "ActionBar.h"
 #include "DialogueManager.h"

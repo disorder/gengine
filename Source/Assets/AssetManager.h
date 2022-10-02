@@ -12,6 +12,7 @@
 #include "StringUtil.h"
 
 class BarnFile;
+#include "BarnFile.h"
 
 // Forward Declarations for all asset types
 class Animation;

@@ -5,7 +5,9 @@
 #include "BuildEnv.h"
 #include "Platform.h"
 
-#if defined(PLATFORM_MAC)
+#if defined(PLATFORM_UNIX)
+#include <dirent.h>
+#elif defined(PLATFORM_MAC)
 #include <CoreFoundation/CoreFoundation.h>
 #include <dirent.h>
 #elif defined(PLATFORM_WINDOWS)
@@ -173,7 +175,7 @@ bool Path::HasExtension(const std::string& path)
 
 bool Directory::Exists(const std::string& path)
 {
-    #if defined(PLATFORM_MAC)
+    #if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
 	DIR* directoryStream = opendir(path.c_str());
 	if(directoryStream == nullptr)
 	{
@@ -199,7 +201,7 @@ bool Directory::Exists(const std::string& path)
 
 bool Directory::Create(const std::string& path)
 {
-    #if defined(PLATFORM_MAC)
+    #if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
 	// Makes the directory with Read/Write/Execute permissions for User and Group, Read/Execute for Other.
 	const int result = mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 

@@ -9,7 +9,7 @@
 #include <string>
 
 #include "Platform.h"
-#if defined(PLATFORM_MAC)
+#if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
 #include <unistd.h>
 #include <limits.h>
 #elif defined(PLATFORM_WINDOWS)
@@ -22,7 +22,7 @@ namespace SystemUtil
 	// NOTE: Don't call this GetComputerName b/c Windows.h conflicts with that!
 	inline std::string GetMachineName()
 	{
-#if defined(PLATFORM_MAC)
+#if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
 		char computerName[_POSIX_HOST_NAME_MAX];
 		gethostname(computerName, _POSIX_HOST_NAME_MAX);
 		return std::string(computerName);
@@ -42,7 +42,7 @@ namespace SystemUtil
 	// NOTE: Don't call this GetUserName b/c Windows.h conflicts with that!
 	inline std::string GetCurrentUserName()
 	{
-#if defined(PLATFORM_MAC)
+#if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
 		char userName[_POSIX_LOGIN_NAME_MAX];
 		getlogin_r(userName, _POSIX_LOGIN_NAME_MAX);
 		return std::string(userName);

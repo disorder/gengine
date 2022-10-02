@@ -99,7 +99,24 @@ if(MSVC)
 endif()
 
 # Library locations/linking/copying.
-if(WIN32)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    # Specify library search directories.
+    target_link_directories(gk3 PRIVATE
+        Libraries/fmod/lib/lin
+        /usr/lib/
+    )
+
+    # Link various libraries.
+    target_link_libraries(gk3
+        avcodec avformat avutil swresample swscale  # ffmpeg
+        fmod                                        # fmod
+        GLEW                                        # GLEW
+        z                                           # zlib
+        SDL2                                        # SD
+        OpenGL                                      # OpenGL
+        pthread                                     # pthread
+    )
+elseif(WIN32)
     # Specify library search directories.
     target_link_directories(gk3 PRIVATE
         Libraries/ffmpeg/lib/win

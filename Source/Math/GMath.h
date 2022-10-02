@@ -23,7 +23,7 @@ namespace Math
     
     inline float Sqrt(float val)
     {
-        return std::sqrtf(val);
+        return sqrtf(val);
     }
     
     inline float InvSqrt(float val)
@@ -31,12 +31,12 @@ namespace Math
         //TODO: this could be replaced by a faster (but approximate) calculation
         //TODO: the famous "fast inverse square root!"
         //TODO: https://www.slideshare.net/maksym_zavershynskyi/fast-inverse-square-root
-        return (1.0f / std::sqrtf(val));
+        return (1.0f / sqrtf(val));
     }
     
     inline bool IsZero(float val)
     {
-		return (std::fabsf(val) < kEpsilon);
+		return (fabsf(val) < kEpsilon);
     }
     
     inline bool AreEqual(float a, float b)
@@ -46,7 +46,7 @@ namespace Math
 	
 	inline float Pow(float base, float exp)
 	{
-		return std::pow(base, exp);
+		return pow(base, exp);
 	}
 	
 	inline int PowBase2(int exp)
@@ -57,57 +57,57 @@ namespace Math
     inline float Mod(float num1, float num2)
     {
 		// floating-point equivalent of "return num1 % num2;"
-		return std::fmod(num1, num2);
+		return fmod(num1, num2);
     }
     
     inline float Sin(float radians)
     {
-        return std::sinf(radians);
+        return sinf(radians);
     }
     
     inline float Asin(float ratio)
     {
-        return std::asinf(ratio);
+        return asinf(ratio);
     }
     
     inline float Cos(float radians)
     {
-        return std::cosf(radians);
+        return cosf(radians);
     }
     
     inline float Acos(float ratio)
     {
-        return std::acosf(ratio);
+        return acosf(ratio);
     }
     
     inline float Tan(float radians)
     {
-        return std::tanf(radians);
+        return tanf(radians);
     }
     
     inline float Atan(float ratio)
     {
-        return std::atanf(ratio);
+        return atanf(ratio);
     }
 
 	inline float Atan2(float y, float x)
 	{
-		return std::atan2(y, x);
+		return atan2(y, x);
 	}
     
     inline float Floor(float val)
     {
-        return std::floor(val);
+        return floor(val);
     }
     
     inline float Ceil(float val)
     {
-        return std::ceil(val);
+        return ceil(val);
     }
     
     inline float Round(float val)
     {
-        return std::round(val);
+        return round(val);
     }
     
     inline int FloorToInt(float val)
@@ -127,7 +127,7 @@ namespace Math
     
     inline float Clamp(float value, float min, float max)
     {
-        return std::fmin(max, std::fmax(value, min));
+        return fmin(max, fmax(value, min));
     }
     
     inline int Clamp(int value, int min, int max)
@@ -137,7 +137,7 @@ namespace Math
     
     inline float Min(float val1, float val2)
     {
-        return std::fmin(val1, val2);
+        return fmin(val1, val2);
     }
     
     inline int Min(int val1, int val2)
@@ -147,7 +147,7 @@ namespace Math
     
     inline float Max(float val1, float val2)
     {
-        return std::fmax(val1, val2);
+        return fmax(val1, val2);
     }
     
     inline int Max(int val1, int val2)
@@ -157,14 +157,14 @@ namespace Math
     
     inline float Abs(float val)
     {
-        return std::abs(val);
+        return abs(val);
     }
 
 	inline float MagnitudeSign(float mag, float sign)
 	{
         // Take magnitude of first number and sign of second number.
         // Return product of those two things. (e.g. 35, -18 => -35)
-		return std::copysign(mag, sign);
+		return copysign(mag, sign);
 	}
     
     inline float ToDegrees(float radians)

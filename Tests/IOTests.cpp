@@ -3,6 +3,7 @@
 //
 // Tests for input/output code.
 //
+#include <cstring>
 #include "catch.hh"
 
 #include "BinaryReader.h"

@@ -8,6 +8,7 @@
 // E.g. a Main Menu, an Options Screen, a Popup, a Tooltip.
 //
 #pragma once
+#include <climits>
 #include "UIWidget.h"
 
 class UICanvas : public UIWidget

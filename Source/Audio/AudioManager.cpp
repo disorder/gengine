@@ -1,5 +1,6 @@
 #include "AudioManager.h"
 
+#include <cstring>
 #include <iostream>
 
 #include "Audio.h"

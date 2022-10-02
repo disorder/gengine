@@ -6,7 +6,9 @@
 //
 #pragma once
 
-#if defined(__APPLE__)
+#if defined (__unix__)
+	#define PLATFORM_UNIX
+#elif defined(__APPLE__)
 	#include <TargetConditionals.h>
 	#if defined(TARGET_OS_OSX)
 		#define PLATFORM_MAC

@@ -75,7 +75,7 @@ void PtsClock::SyncTo(PtsClock* other)
 {
     double thisTime = GetTime();
     double otherTime = other->GetTime();
-    if(!isnan(otherTime) && (isnan(thisTime) || fabs(thisTime - otherTime) > AV_NOSYNC_THRESHOLD))
+    if(!std::isnan(otherTime) && (std::isnan(thisTime) || fabs(thisTime - otherTime) > AV_NOSYNC_THRESHOLD))
     {
         SetPts(otherTime, other->mSerial);
     }
