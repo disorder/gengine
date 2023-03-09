@@ -46,8 +46,12 @@ shpvoid SetChatCount(std::string noun, int count); // DEV
 shpvoid FullReset(); // DEV
 shpvoid ResetGameData(); // DEV
 
+shpvoid SetVerbModal(int modalState);
+shpvoid StartVerbCancel();
+shpvoid StopVerbCancel();
+
 // GAME BEHAVIOR
-shpvoid SetGameTimer(std::string noun, std::string verb, int milliseconds);
+shpvoid SetGameTimer(const std::string& noun, const std::string& verb, int milliseconds);
 shpvoid SetTimerMs(int milliseconds); // WAIT
 shpvoid SetTimerSeconds(float seconds); // WAIT
 

@@ -14,11 +14,12 @@
 #include "UIButton.h"
 #include "UICanvas.h"
 #include "UIImage.h"
+#include "Window.h"
 
-DrivingScreen::DrivingScreen() : Actor(Actor::TransformType::RectTransform)
+DrivingScreen::DrivingScreen() : Actor(TransformType::RectTransform)
 {
     // Driving screen should draw above scene transitioner so it doesn't appear on this screen.
-    mCanvas = AddComponent<UICanvas>(4);
+    AddComponent<UICanvas>(4);
 
     // Canvas takes up entire screen.
     RectTransform* rectTransform = GetComponent<RectTransform>();
@@ -28,15 +29,13 @@ DrivingScreen::DrivingScreen() : Actor(Actor::TransformType::RectTransform)
     
     // Add black background that eats input.
     UIImage* background = AddComponent<UIImage>();
-    mCanvas->AddWidget(background);
     background->SetTexture(&Texture::Black);
     background->SetReceivesInput(true);
 
     // Add map background image.
-    mMapActor = new Actor(Actor::TransformType::RectTransform);
+    mMapActor = new Actor(TransformType::RectTransform);
     mMapActor->GetTransform()->SetParent(GetTransform());
     UIImage* mapImage = mMapActor->AddComponent<UIImage>();
-    mCanvas->AddWidget(mapImage);
     mMapTexture = Services::GetAssets()->LoadTexture("DM_BASE.BMP");
     mapImage->SetTexture(mMapTexture, true);
     mMapImage = mapImage;
@@ -125,7 +124,7 @@ void DrivingScreen::Show(FollowMode followMode)
 
     // Make sure the map fits snugly in the window area, with aspect ratio preserved.
     // We do this every time the UI shows in case resolution has changed.
-    mMapImage->ResizeToFitPreserveAspect(Services::GetRenderer()->GetWindowSize());
+    mMapImage->ResizeToFitPreserveAspect(Window::GetSize());
     
     // Put all blips in starting positions, with paths set if needed.
     mFollowMode = followMode;
@@ -196,10 +195,9 @@ void DrivingScreen::ExitToLocation(const std::string& locationCode)
 void DrivingScreen::AddLocation(const std::string& locationCode, const std::string& buttonId, const Vector2& buttonPos)
 {
     // Create button actor & widget.
-    Actor* buttonActor = new Actor(Actor::TransformType::RectTransform);
+    Actor* buttonActor = new Actor(TransformType::RectTransform);
     buttonActor->GetTransform()->SetParent(mMapActor->GetTransform());
     UIButton* button = buttonActor->AddComponent<UIButton>();
-    mCanvas->AddWidget(button);
 
     // Set textures.
     Texture* upTexture = Services::GetAssets()->LoadTexture("DM_" + buttonId + "_UL.BMP");
@@ -239,6 +237,14 @@ void DrivingScreen::AddLocation(const std::string& locationCode, const std::stri
     // On press, go to the map location.
     button->SetPressCallback([this, locationCode](UIButton* button) {
         Services::GetAudio()->PlaySFX(Services::GetAssets()->LoadAudio("MAPBUTTON.WAV"));
+
+        // Check conditions under which we would NOT allow going to this location.
+        // Don't allow going to Larry's place during timeblock 106P.
+        if(locationCode == "LHE" && Services::Get<GameProgress>()->GetTimeblock() == Timeblock(1, 6, Timeblock::PM))
+        {
+            Services::Get<ActionManager>()->ExecuteSheepAction("wait StartDialogue(\"21F4F625S1\", 1)");
+            return;
+        }
 
         // Whenever you go to a location on the driving map, it's assumed that your bike also moves there.
         // Each location has it's own integer code (of course) that is rather arbitrary.
@@ -441,7 +447,6 @@ DrivingScreenBlip* DrivingScreen::CreateBlip()
 
     // Add image and use the blip texture.
     UIImage* blipImage = blip->AddComponent<UIImage>();
-    mCanvas->AddWidget(blipImage);
     blipImage->SetTexture(mBlipTexture, true);
     blip->SetImage(blipImage);
     return blip;

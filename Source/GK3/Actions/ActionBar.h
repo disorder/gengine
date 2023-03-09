@@ -1,6 +1,4 @@
 //
-// ActionBar.h
-//
 // Clark Kromenaker
 //
 // A UI that appears when the the player needs to choose an action to
@@ -21,7 +19,6 @@
 struct VerbIcon;
 class RectTransform;
 class UIButton;
-class UICanvas;
 
 class ActionBar : public Actor
 {
@@ -36,13 +33,21 @@ public:
     bool HasVerb(const std::string& verb) const;
 	void AddVerbToFront(const std::string& verb, std::function<void()> callback);
 	void AddVerbToBack(const std::string& verb, std::function<void()> callback);
+
+    void SetAllowCancel(bool allowCancel) { mAllowCancel = allowCancel; }
+    void SetAllowDismiss(bool allowDismiss) { mAllowDismiss = allowDismiss; }
 	
 protected:
 	void OnUpdate(float deltaTime) override;
 	
 private:
-	// The action bar's canvas, which renders the UI.
-	UICanvas* mCanvas = nullptr;
+    // If true, a cancel button is displayed. Pressing it will hide the action bar.
+    // This may be disabled in situations where the bar is not allowed to be canceled.
+    bool mAllowCancel = true;
+
+    // If true, the bar can be dismissed by clicking outside of it, or pressing escape.
+    // This may be disabled when the bar can't be dismissed (forced to make a choice).
+    bool mAllowDismiss = true;
     
     // A large clickable area behind the action bar that stops scene interaction while visible.
     UIButton* mSceneBlockerButton = nullptr;

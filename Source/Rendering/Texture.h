@@ -10,7 +10,6 @@
 #include <string>
 
 #include <GL/glew.h>
-//#include <OpenGL/gl.h>
 
 #include "Atomics.h"
 #include "Color32.h"
@@ -81,10 +80,10 @@ public:
     
     // Coordinates are from top-left corner of texture.
     void SetPixelColor32(int x, int y, const Color32& color);
-	Color32 GetPixelColor32(int x, int y);
+	Color32 GetPixelColor32(int x, int y) const;
 
     void SetPaletteIndex(int x, int y, uint8 val);
-	uint8 GetPaletteIndex(int x, int y);
+	uint8 GetPaletteIndex(int x, int y) const;
 	
 	//void Blit(Texture* source, int destX, int destY);
 	
@@ -94,7 +93,8 @@ public:
                             Texture& dest, int destX, int destY);
 	
 	// Alpha and transparency
-	void SetTransparentColor(Color32 color);
+	void SetTransparentColor(const Color32& color);
+    void ClearTransparentColor();
 	void ApplyAlphaChannel(const Texture& alphaTexture);
 
     // GPU upload

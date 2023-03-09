@@ -7,25 +7,36 @@ code
 {
 	CheckTimeblockComplete$()
 	{
+		// DAY 1
 		if(IsCurrentTime("110A"))
 		{
-			Call("CheckTimeblockComplete110A$");
+			wait Call("CheckTimeblockComplete110A$");
 		}
 		else if(IsCurrentTime("112P"))
 		{
-			Call("CheckTimeblockComplete112P$");
+			wait Call("CheckTimeblockComplete112P$");
 		}
 		else if(IsCurrentTime("102P"))
 		{
-			Call("CheckTimeblockComplete102P$");
+			wait Call("CheckTimeblockComplete102P$");
 		}
 		else if(IsCurrentTime("104P"))
 		{
-			Call("CheckTimeblockComplete104P$");
+			wait Call("CheckTimeblockComplete104P$");
 		}
 		else if(IsCurrentTime("106P"))
 		{
-			Call("CheckTimeblockComplete106P$");
+			wait Call("CheckTimeblockComplete106P$");
+		}
+
+		// DAY 2
+		else if(IsCurrentTime("207A"))
+		{
+			wait Call("CheckTimeblockComplete207A$");
+		}
+		else if(IsCurrentTime("210A"))
+		{
+			wait Call("CheckTimeblockComplete210A$");
 		}
 	}
 
@@ -213,7 +224,7 @@ code
 		// Must have used the binocs to spy on Mosely/Buthane from Chateau de Blanchefort.
 		//if(GetNounVerbCount("VIEW_OF_LHOMME_MORE", "BINOCULARS") == 0)
 		//{
-		//	return;`
+		//	return;
 		//}
 
 		// OK, go to next timeblock!
@@ -222,6 +233,69 @@ code
 
 	CheckTimeblockComplete106P$()
 	{
-		//...
+		// Must be at R25.
+		if(IsCurrentLocation("R25") == 0)
+		{
+			return;
+		}
+
+		// Must have asked Grace & Mosely about Abbe Arnaud.
+		// There are other requirements to get to this point, but you can only do this if you've done everything else.
+		if(GetTopicCount("GRACE_N_MOSE", "T_ABBE") == 0)
+		{
+			return;
+		}
+
+		// OK, go to next timeblock!
+		SetTime("207A");
+	}
+
+	CheckTimeblockComplete207A$()
+	{
+		// Must be at R25.
+		if(IsCurrentLocation("R25") == 0)
+		{
+			return;
+		}
+
+		// Must have come here from Chateau de Blanchefort.
+		if(WasLastLocation("CD1") == 0)
+		{
+			return;
+		}
+
+		// To finish the timeblock, you must have gone on the tour, visited Poussin's Tomb, and visited the Chateau.
+		// The *exact* conditions for that are a bit unclear, but these should suffice.
+		if(GetTopicCount("EMILIO", "T_LE_SERPENT_ROUGE") < 1 || GetTopicCount("MOSELY", "T_LE_SERPENT_ROUGE") < 1 || GetTopicCount("BUTHANE", "T_LE_SERPENT_ROUGE") < 1)
+		{
+			return;
+		}
+
+		// This timeblock has an ending movie too!
+		wait PlayFullScreenMovie("207aend");
+
+		// OK, go to next timeblock!
+		SetTime("210A");
+	}
+
+	CheckTimeblockComplete210A$()
+	{
+		// Must be at LBY.
+		if(IsCurrentLocation("LBY") == 0)
+		{
+			return;
+		}
+
+		// There are several things that must be done for this timeblock to end. However, these are all checked by a condition in the Lobby NVC.
+		// This triggers a cutscene where Jean & Roxanne offer to make lunch for Gabe. The timeblock then ends.
+		// That cutscene appears to use this Noun/Verb count as an indicator that the timeblock should end.
+		if(GetNounVerbCount("MAID", "FOLLOW") == 0)
+		{
+			return;
+		}
+
+		// OK, go to next timeblock!
+		// In this case, we also need to switch to a new location (Chateau de Serras).
+		SetLocationTime("CSE", "212P");
 	}
 }

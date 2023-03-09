@@ -28,6 +28,22 @@ Walker::Walker(Actor* owner) : Component(owner),
     
 }
 
+void Walker::SetCharacterConfig(const CharacterConfig& characterConfig)
+{
+    mCharConfig = &characterConfig;
+    SetWalkAnims(mCharConfig->walkStartAnim, mCharConfig->walkLoopAnim,
+                 mCharConfig->walkStartTurnLeftAnim, mCharConfig->walkStartTurnRightAnim);
+}
+
+void Walker::SetWalkAnims(Animation* startAnim, Animation* loopAnim,
+                          Animation* startTurnLeftAnim, Animation* startTurnRightAnim)
+{
+    mWalkStartAnim = startAnim;
+    mWalkLoopAnim = loopAnim;
+    mWalkStartTurnLeftAnim = startTurnLeftAnim;
+    mWalkStartTurnRightAnim = startTurnRightAnim;
+}
+
 void Walker::WalkTo(const Vector3& position, std::function<void()> finishCallback)
 {
     WalkTo(position, Heading::None, finishCallback);
@@ -87,6 +103,25 @@ void Walker::WalkToSee(GKObject* target, std::function<void()> finishCallback)
     }
 }
 
+void Walker::WalkOutOfRegion(int regionIndex, const Vector3& exitPosition, const Heading& exitHeading, std::function<void()> finishCallback)
+{
+    // For now, we can only track one "exit region" request at a time. So clear other if set.
+    if(mExitRegionCallback != nullptr)
+    {
+        auto callback = mExitRegionCallback;
+        mExitRegionCallback = nullptr;
+        callback();
+    }
+    
+    // Save exit region and callback.
+    mExitRegionIndex = regionIndex;
+    mExitRegionCallback = finishCallback;
+
+    // Attempt to leave the region by moving towards the exit position/heading.
+    // Even if already outside the region, we want to let this go for at least one frame. When Update is called, it'll get cleared.
+    WalkTo(exitPosition, exitHeading, nullptr);
+}
+
 void Walker::SkipToEnd()
 {
     // If not walking, or at the end of the walk, nothing to skip.
@@ -108,7 +143,7 @@ void Walker::SkipToEnd()
     // Move actor back by "at position" amount, so end walk anim puts us in right spot.
     mGKOwner->SetPosition(mGKOwner->GetPosition() - (mGKOwner->GetForward() * kAtNodeDist));
 
-    // Still play "end of walk" bit.
+    // Remove all walk ops except for the "follow path end" op.
     bool poppedAction = false;
     while(!mWalkActions.empty() && mWalkActions.back().op != WalkOp::FollowPathEnd)
     {
@@ -124,6 +159,13 @@ void Walker::SkipToEnd()
 bool Walker::AtPosition(const Vector3& position)
 {
     return (GetOwner()->GetPosition() - position).GetLengthSq() <= kAtNodeDistSq;
+}
+
+Texture* Walker::GetFloorTypeWalkingOn() const
+{
+    Scene* scene = GEngine::Instance()->GetScene();
+    if(scene == nullptr) { return nullptr; }
+    return scene->GetFloorTexture(GetOwner()->GetPosition());
 }
 
 void Walker::OnUpdate(float deltaTime)
@@ -229,7 +271,7 @@ void Walker::OnUpdate(float deltaTime)
                     mNeedContinueWalkAnim = false;
                     
                     AnimParams animParams;
-                    animParams.animation = mCharConfig->walkLoopAnim;
+                    animParams.animation = mWalkLoopAnim;
                     animParams.allowMove = true;
                     animParams.fromAutoScript = mFromAutoscript;
                     animParams.finishCallback = std::bind(&Walker::OnWalkAnimFinished, this);
@@ -251,12 +293,28 @@ void Walker::OnUpdate(float deltaTime)
             }
         }
     }
+
+    // Check if we exited any desired region.
+    if(mExitRegionIndex >= 0)
+    {
+        if(mExitRegionCallback == nullptr)
+        {
+            mExitRegionIndex = -1;
+        }
+        else if(mWalkerBoundary == nullptr || mWalkerBoundary->GetRegionIndex(GetOwner()->GetPosition()) != mExitRegionIndex)
+        {
+            mExitRegionIndex = -1;
+            auto callback = mExitRegionCallback;
+            mExitRegionCallback = nullptr;
+            callback();
+        }
+    }
 }
 
 void Walker::WalkToInternal(const Vector3& position, const Heading& heading, std::function<void()> finishCallback, bool fromAutoscript)
 {
-    // Save finish callback.
-    mFinishedPathCallback = finishCallback;
+    // Clear continue walk anim flag. Since we're starting a new walk.
+    mNeedContinueWalkAnim = false;
 
     // Save if from autoscript.
     mFromAutoscript = fromAutoscript;
@@ -278,6 +336,7 @@ void Walker::WalkToInternal(const Vector3& position, const Heading& heading, std
     }
 
     // Do we need to walk?
+    bool doNextAction = true;
     if(!AtPosition(position))
     {
         // We will walk, so save the "walk end" action.
@@ -390,6 +449,11 @@ void Walker::WalkToInternal(const Vector3& position, const Heading& heading, std
                     startWalkAction.op = WalkOp::FollowPathStart;
                     mWalkActions.push_back(startWalkAction);
                 }
+                else
+                {
+                    // In this case, we were already walking, and not warping - DO NOT play the next action right away!
+                    doNextAction = false;
+                }
             }
             else
             {
@@ -414,11 +478,11 @@ void Walker::WalkToInternal(const Vector3& position, const Heading& heading, std
 
                 // Make sure this actor has animations for turning left/right.
                 // A lot of actors actually don't...in which case normal starts after all.
-                if(startWalkTurnAction.op == WalkOp::FollowPathStartTurnRight && mCharConfig->walkStartTurnRightAnim == nullptr)
+                if(startWalkTurnAction.op == WalkOp::FollowPathStartTurnRight && mWalkStartTurnRightAnim == nullptr)
                 {
                     startWalkTurnAction.op = WalkOp::FollowPathStart;
                 }
-                else if(startWalkTurnAction.op == WalkOp::FollowPathStartTurnLeft && mCharConfig->walkStartTurnLeftAnim == nullptr)
+                else if(startWalkTurnAction.op == WalkOp::FollowPathStartTurnLeft && mWalkStartTurnLeftAnim == nullptr)
                 {
                     startWalkTurnAction.op = WalkOp::FollowPathStart;
                 }
@@ -429,9 +493,15 @@ void Walker::WalkToInternal(const Vector3& position, const Heading& heading, std
         }
     }
 
+    // Save finish callback.
+    mFinishedPathCallback = finishCallback;
+    
     // OK, walk sequence has been created - let's start doing it!
     //std::cout << "Walk Sequence Begin!" << std::endl;
-    NextAction();
+    if(doNextAction)
+    {
+        NextAction();
+    }
 }
 
 void Walker::PopAndNextAction()
@@ -459,7 +529,7 @@ void Walker::NextAction()
             //std::cout << "Follow Path Start" << std::endl;
             
             AnimParams animParams;
-            animParams.animation = mCharConfig->walkStartAnim;
+            animParams.animation = mWalkStartAnim;
             animParams.allowMove = true;
             animParams.fromAutoScript = mFromAutoscript;
             animParams.finishCallback = std::bind(&Walker::PopAndNextAction, this);
@@ -470,7 +540,7 @@ void Walker::NextAction()
             //std::cout << "Follow Path Start (Turn Left)" << std::endl;
             
             AnimParams animParams;
-            animParams.animation = mCharConfig->walkStartTurnLeftAnim;
+            animParams.animation = mWalkStartTurnLeftAnim;
             animParams.allowMove = true;
             animParams.fromAutoScript = mFromAutoscript;
             animParams.finishCallback = std::bind(&Walker::PopAndNextAction, this);
@@ -481,7 +551,7 @@ void Walker::NextAction()
             //std::cout << "Follow Path Start (Turn Right)" << std::endl;
             
             AnimParams animParams;
-            animParams.animation = mCharConfig->walkStartTurnRightAnim;
+            animParams.animation = mWalkStartTurnRightAnim;
             animParams.allowMove = true;
             animParams.fromAutoScript = mFromAutoscript;
             animParams.finishCallback = std::bind(&Walker::PopAndNextAction, this);
@@ -492,7 +562,7 @@ void Walker::NextAction()
             //std::cout << "Follow Path" << std::endl;
             
             AnimParams animParams;
-            animParams.animation = mCharConfig->walkLoopAnim;
+            animParams.animation = mWalkLoopAnim;
             animParams.allowMove = true;
             animParams.fromAutoScript = mFromAutoscript;
             animParams.finishCallback = std::bind(&Walker::OnWalkAnimFinished, this);
@@ -507,9 +577,10 @@ void Walker::NextAction()
         else if(mWalkActions.back().op == WalkOp::FollowPathEnd)
         {
             //std::cout << "Follow Path End" << std::endl;
-            GEngine::Instance()->GetScene()->GetAnimator()->Stop(mCharConfig->walkStartAnim);
-            GEngine::Instance()->GetScene()->GetAnimator()->Stop(mCharConfig->walkLoopAnim);
-            
+            GEngine::Instance()->GetScene()->GetAnimator()->Stop(mWalkStartAnim);
+            GEngine::Instance()->GetScene()->GetAnimator()->Stop(mWalkLoopAnim);
+
+            // Play walk stop anim.
             AnimParams animParams;
             animParams.animation = mCharConfig->walkStopAnim;
             animParams.allowMove = true;

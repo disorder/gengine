@@ -30,32 +30,49 @@ Font::Font(const std::string& name, char* data, int dataLength) : Asset(name)
     unsigned int currentY = 0;
     int currentLine = 1;
 
-    // We'll now interate the font characters and determine the UV rects
-    // within the font texture used to render each glyph.
+    // For each char, determine UV rect within the font texture for rendering the glyph.
     for(size_t i = 0; i < mFontCharacters.size(); i++)
     {
         Glyph glyph;
         glyph.character = mFontCharacters[i];
+        glyph.width = 1; // all glyphs are at least 1 pixel wide
+        glyph.height = mGlyphHeight;
 
-        // The width is at least 1.
-        int width = 1;
-
-        // The left X UV coord is just where we left off for the last glyph.
-        // But right X UV requires us to find edge of next glyph (or end of texture).
+        // The left X UV coord is just where we left off from the last glyph.
         float leftUvX = (float)currentX / mFontTexture->GetWidth();
-        for(currentX = currentX + 1; currentX < mFontTexture->GetWidth(); currentX++)
+
+        // To find the right X UV coord, we need to find the edge of the next glyph (or end of the texture).
+        bool foundGlyphStartColor = false;
+        for(currentX = currentX + 1; currentX < mFontTexture->GetWidth(); ++currentX)
         {
             Color32 color = mFontTexture->GetPixelColor32(currentX, currentY);
-            if(color == glyphStartColor) { break; }
+            if(color == glyphStartColor)
+            {
+                foundGlyphStartColor = true;
+                break;
+            }
 
             // This pixel is black, so it is part of the glyph's width.
-            width++;
+            ++glyph.width;
         }
-        float rightUvX = (float)currentX / mFontTexture->GetWidth();
 
-        // Save height/width.
-        glyph.width = width;
-        glyph.height = mGlyphHeight;
+        // There is a mild complication in GK3 fonts we need to account for.
+        // If this is a SINGLE LINE font, and we get to end of texture WITHOUT finding "glyph start color", that's fine - use it.
+        // But if this is a MULTI LINE font, we MUST find the "glyph start color". If not found, we go to next line.
+        if(mLineCount > 1 && !foundGlyphStartColor)
+        {
+            // Go to next line.
+            ++currentLine;
+            currentX = 1;
+            currentY += lineHeight;
+
+            // We need to "redo" this glyph on the next line.
+            --i;
+            continue;
+        }
+
+        // We now know where the right UV coord is for this glyph.
+        float rightUvX = (float)currentX / mFontTexture->GetWidth();
 
         // Calculate top/bottom UV values.
         // Top is +1 because the top pixel is discarded.
@@ -63,6 +80,7 @@ Font::Font(const std::string& name, char* data, int dataLength) : Asset(name)
         float topUvY = (float)(currentY + 1.0f) / mFontTexture->GetHeight();
 
         // Save those UV coords.
+        //TODO: Because this is a Rect, we're saving excess data here. Really only need 4 vals (min/max for x/y).
         glyph.bottomLeftUvCoord = Vector2(leftUvX, botUvY);
         glyph.topRightUvCoord = Vector2(rightUvX, topUvY);
 
@@ -75,7 +93,7 @@ Font::Font(const std::string& name, char* data, int dataLength) : Asset(name)
         // If we reached the end of the font texture, go to the next line, if possible.
         if(currentX >= mFontTexture->GetWidth() - 1 && currentLine < mLineCount)
         {
-            currentLine++;
+            ++currentLine;
             currentX = 1;
             currentY += lineHeight;
         }
@@ -128,6 +146,7 @@ void Font::ParseFromData(char* data, int dataLength)
 	parser.SetMultipleKeyValuePairsPerLine(false);
 	
 	// Read each line, and each key/pair, one at a time.
+    Texture* alphaTexture = nullptr;
 	while(parser.ReadLine())
 	{
 		while(parser.ReadKeyValuePair())
@@ -144,7 +163,7 @@ void Font::ParseFromData(char* data, int dataLength)
 			}
 			else if(StringUtil::EqualsIgnoreCase(keyValue.key, "alpha channel"))
 			{
-				//TODO
+                alphaTexture = Services::GetAssets()->LoadTexture(keyValue.value);
 			}
 			else if(StringUtil::EqualsIgnoreCase(keyValue.key, "line count"))
 			{
@@ -173,25 +192,33 @@ void Font::ParseFromData(char* data, int dataLength)
 				{
                     mColorMode = ColorMode::ColorReplace;
 				}
-                else
-                {
-                    std::cout << "Unknown font type: " << keyValue.value << std::endl;
-                }
 			}
 			else if(StringUtil::EqualsIgnoreCase(keyValue.key, "color"))
 			{
 				// Defined when type is "Color Replacement".
-				mColor = keyValue.GetValueAsColor32();
+                // The value is sometimes empty, which means we should just use the default.
+                if(!keyValue.value.empty())
+                {
+                    mColor = keyValue.GetValueAsColor32();
+                }
 			}
 			else if(StringUtil::EqualsIgnoreCase(keyValue.key, "foreground color"))
 			{
 				// Defined when type is "Alpha Blend".
-				mColor = keyValue.GetValueAsColor32();
+                // The value is sometimes empty, which means we should just use the default.
+                if(!keyValue.value.empty())
+                {
+                    mColor = keyValue.GetValueAsColor32();
+                }
 			}
 			else if(StringUtil::EqualsIgnoreCase(keyValue.key, "background color"))
 			{
 				// Defined when type is "Alpha Blend".
-				mBackgroundColor = keyValue.GetValueAsColor32();
+                // The value is sometimes empty, which means we should just use the default.
+                if(!keyValue.value.empty())
+                {
+                    mBackgroundColor = keyValue.GetValueAsColor32();
+                }
 			}
             //TODO: function
             //TODO: destination opacity
@@ -209,4 +236,10 @@ void Font::ParseFromData(char* data, int dataLength)
 	{
 		mFontTexture = Services::GetAssets()->LoadTexture(GetNameNoExtension());
 	}
+
+    // If we have an alpha channel apply it to the font texture.
+    if(mFontTexture != nullptr && alphaTexture != nullptr)
+    {
+        mFontTexture->ApplyAlphaChannel(*alphaTexture);
+    }
 }

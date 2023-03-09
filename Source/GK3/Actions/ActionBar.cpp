@@ -9,14 +9,15 @@
 #include "UICanvas.h"
 #include "UILabel.h"
 #include "VerbManager.h"
+#include "Window.h"
 
 ActionBar::ActionBar() : Actor(TransformType::RectTransform)
 {
 	// Create canvas, to contain the UI components.
-	mCanvas = AddComponent<UICanvas>(5);
+	UICanvas* canvas = AddComponent<UICanvas>(5);
 	
     // Canvas rect fills the entire screen.
-    RectTransform* rectTransform = mCanvas->GetRectTransform();
+    RectTransform* rectTransform = canvas->GetRectTransform();
 	rectTransform->SetSizeDelta(0.0f, 0.0f);
 	rectTransform->SetAnchorMin(Vector2::Zero);
 	rectTransform->SetAnchorMax(Vector2::One);
@@ -25,14 +26,16 @@ ActionBar::ActionBar() : Actor(TransformType::RectTransform)
     // This stops interaction with the scene while action bar is visible.
     // It also allows clicking outside the bar to cancel it.
     mSceneBlockerButton = AddComponent<UIButton>();
-    mCanvas->AddWidget(mSceneBlockerButton);
     mSceneBlockerButton->SetPressCallback([this](UIButton* button) {
-        OnCancelButtonPressed();
+        if(mAllowDismiss)
+        {
+            OnCancelButtonPressed();
+        }
     });
 	
 	// Create button holder - it holds the buttons and we move it around the screen.
     // Since we will set the action bar's position based on mouse position, set the anchor to the lower-left corner.
-	Actor* buttonHolderActor = new Actor(Actor::TransformType::RectTransform);
+	Actor* buttonHolderActor = new Actor(TransformType::RectTransform);
 	mButtonHolder = buttonHolderActor->GetComponent<RectTransform>();
 	mButtonHolder->SetParent(rectTransform);
 	mButtonHolder->SetAnchorMin(Vector2::Zero);
@@ -136,12 +139,26 @@ void ActionBar::Show(const std::string& noun, VerbType verbType, std::vector<con
 		mHasInventoryItemButton = !activeItemName.empty() && !StringUtil::EqualsIgnoreCase(activeItemName, noun);
 		if(mHasInventoryItemButton)
 		{
-			VerbIcon& invVerbIcon = verbManager->GetInventoryIcon(activeItemName);
+            // Usually, the name of the inventory item correlates EXACTLY to the verb used for that item.
+            // However, this isn't the case in a few instances. This seems like a developer error.
+            // I don't see any place where a mapping is defined, so I think it must be hardcoded (like this).
+            std::string invItemVerb = activeItemName;
+            if(StringUtil::EqualsIgnoreCase(activeItemName, "FINGERPRINT_KIT_GRACES"))
+            {
+                invItemVerb = "FINGERPRINT_KIT";
+            }
+            else if(StringUtil::EqualsIgnoreCase(activeItemName, "PREPARATION_H_TUBE"))
+            {
+                invItemVerb = "PREPARATION_H";
+            }
+
+            // Create a button for this inventory item.
+			VerbIcon& invVerbIcon = verbManager->GetInventoryIcon(invItemVerb);
 			UIButton* invButton = AddButton(buttonIndex, invVerbIcon, "INV");
 			++buttonIndex;
 			
 			// Create callback for inventory button press.
-            const Action* invAction = Services::Get<ActionManager>()->GetAction(noun, activeItemName);
+            const Action* invAction = Services::Get<ActionManager>()->GetAction(noun, invItemVerb);
 			invButton->SetPressCallback([this, invAction, executeCallback](UIButton* button) {
 				// Hide action bar on button press.
 				this->Hide();
@@ -153,13 +170,16 @@ void ActionBar::Show(const std::string& noun, VerbType verbType, std::vector<con
 	}
 	
 	// Always put cancel button on the end.
-	VerbIcon& cancelVerbIcon = verbManager->GetVerbIcon("CANCEL");
-	UIButton* cancelButton = AddButton(buttonIndex, cancelVerbIcon, "CANCEL");
-	
-	// Pressing cancel button hides the bar, but it also requires an extra step. So its got its own callback.
-    cancelButton->SetPressCallback([this](UIButton* button) {
-        OnCancelButtonPressed();
-    });
+    if(mAllowCancel)
+    {
+        VerbIcon& cancelVerbIcon = verbManager->GetVerbIcon("CANCEL");
+        UIButton* cancelButton = AddButton(buttonIndex, cancelVerbIcon, "CANCEL");
+
+        // Pressing cancel button hides the bar, but it also requires an extra step. So its got its own callback.
+        cancelButton->SetPressCallback([this](UIButton* button){
+            OnCancelButtonPressed();
+        });
+    }
 	
 	// Refresh layout after adding all buttons to position everything correctly.
 	RefreshButtonLayout();
@@ -253,7 +273,7 @@ void ActionBar::OnUpdate(float deltaTime)
 	if(IsShowing()) 
 	{
         // Most keyboard input counts as a cancel action, unless some text input is active (like debug window).
-        if(!Services::GetInput()->IsTextInput())
+        if(!Services::GetInput()->IsTextInput() && mAllowDismiss)
         {
             // Any key press EXCEPT ~ counts as a cancel action.
             // This logic technically blocks any other cancel action due to key presses WHILE ~ is pressed but...close enough.
@@ -282,13 +302,9 @@ UIButton* ActionBar::AddButton(int index, const VerbIcon& buttonIcon, const std:
 	}
 	else
 	{
-		Actor* buttonActor = new Actor(Actor::TransformType::RectTransform);
+		Actor* buttonActor = new Actor(TransformType::RectTransform);
 		buttonActor->GetTransform()->SetParent(mButtonHolder);
-		
 		button = buttonActor->AddComponent<UIButton>();
-		
-		// Add button as a widget.
-		mCanvas->AddWidget(button);
 	}
 	
 	// Put into buttons array at desired position.
@@ -330,7 +346,7 @@ void ActionBar::CenterOnPointer()
 	mButtonHolder->SetAnchoredPosition(Services::GetInput()->GetMousePosition());
 	
 	// Keep inside the screen.
-    mButtonHolder->MoveInsideRect(Services::GetRenderer()->GetWindowRect());
+    mButtonHolder->MoveInsideRect(Window::GetRect());
 }
 
 void ActionBar::OnCancelButtonPressed()

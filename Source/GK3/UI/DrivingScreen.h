@@ -10,11 +10,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Color32.h"
 #include "Vector2.h"
 
 class DrivingScreenBlip;
 class UIButton;
-class UICanvas;
 class UIImage;
 
 class DrivingScreen : public Actor
@@ -73,9 +73,6 @@ public:
     bool FollowingSomeone() const { return mFollowMode != FollowMode::None; }
 
 private:
-    // The canvas for this screen.
-    UICanvas* mCanvas = nullptr;
-
     // The map is a child of the screen, and then all the location buttons are children of the map.
     UIImage* mMapImage = nullptr;
     Actor* mMapActor = nullptr;

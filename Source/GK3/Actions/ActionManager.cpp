@@ -19,21 +19,28 @@
 
 TYPE_DEF_BASE(ActionManager);
 
-void OutputActions(const std::vector<const Action*>& actions)
+namespace
 {
-    for(auto& action : actions)
+    void OutputActions(const std::vector<const Action*>& actions)
     {
-        std::cout << "Action " << action->ToString() << std::endl;
+        for(auto& action : actions)
+        {
+            std::cout << "Action " << action->ToString() << std::endl;
+        }
+    }
+}
+
+ActionManager::~ActionManager()
+{
+    // Clean up any leftover script in the custom action.
+    if(mCustomAction.script.script != nullptr)
+    {
+        delete mCustomAction.script.script;
     }
 }
 
 void ActionManager::Init()
 {
-	// Pre-populate the Sheep Command action.
-	mSheepCommandAction.noun = "SHEEP_COMMAND";
-	mSheepCommandAction.verb = "NONE";
-	mSheepCommandAction.caseLabel = "NONE";
-	
 	// Create action bar, which will be used to choose nouns/verbs by the player.
 	mActionBar = new ActionBar();
 	mActionBar->SetIsDestroyOnLoad(false);
@@ -127,34 +134,30 @@ bool ActionManager::ExecuteAction(const std::string& noun, const std::string& ve
 {
     // For this noun/verb pair, find the best Action to use in the current scenario.
     Action* action = GetHighestPriorityAction(noun, verb, VerbType::Normal);
-    
-	// Execute action if we found one.
-	if(action != nullptr)
-	{
-		ExecuteAction(action, finishCallback);
-		return true;
-	}
 
-    // Well...we did technically finish I suppose!
-    if(finishCallback != nullptr)
-    {
-        finishCallback(nullptr);
-    }
-	return false;
+    // Execute the action. This handles the null case internally.
+    ExecuteAction(action, finishCallback);
+
+    // Return true if we actually played an action, false if not.
+    return action != nullptr;
 }
 
 void ActionManager::ExecuteAction(const Action* action, std::function<void(const Action*)> finishCallback)
 {
+    // Early out if action is null.
 	if(action == nullptr)
 	{
-		//TODO: Log
+        if(finishCallback != nullptr)
+        {
+            finishCallback(action);
+        }
 		return;
 	}
 	
 	// We should only execute one action at a time.
 	if(mCurrentAction != nullptr)
 	{
-		//TODO: Log?
+        Services::GetReports()->Log("Actions", StringUtil::Format("Skipping NVC %s - another action is in progress", action->ToString().c_str()));
 		return;
 	}
 	mCurrentAction = action;
@@ -196,37 +199,63 @@ void ActionManager::ExecuteSheepAction(const std::string& sheepName, const std::
 
 void ActionManager::ExecuteSheepAction(const std::string& sheepScriptText, std::function<void(const Action*)> finishCallback)
 {
+    // This is just a custom action using specific NOUN/VERB/CASE values.
+    ExecuteCustomAction("SHEEP_COMMAND", "NONE", "NONE", sheepScriptText, finishCallback);
+}
+
+void ActionManager::ExecuteCustomAction(const std::string& noun, const std::string& verb, const std::string& caseLabel, const std::string& sheepScriptText, std::function<void(const Action*)> finishCallback)
+{
     // We should only execute one action at a time.
     if(mCurrentAction != nullptr)
     {
-        //TODO: Log?
+        // Kind of a HACK, but we need a temp custom object in this case.
+        Action tempAction;
+        tempAction.noun = noun;
+        tempAction.verb = verb;
+        tempAction.caseLabel = caseLabel;
+        tempAction.script.text = sheepScriptText;
+        Services::GetReports()->Log("Actions", StringUtil::Format("Skipping NVC %s - another action is in progress", tempAction.ToString().c_str()));
         return;
     }
-    mCurrentAction = &mSheepCommandAction;
-    mCurrentActionFinishCallback = finishCallback;
 
-    // Log it!
-    mSheepCommandAction.script.text = sheepScriptText;
-    Services::GetReports()->Log("Actions", StringUtil::Format("Playing NVC %s", mSheepCommandAction.ToString().c_str()));
-
-    // Increment action ID.
-    ++mActionId;
+    // Clean up any leftover script from last run.
+    if(mCustomAction.script.script != nullptr)
+    {
+        delete mCustomAction.script.script;
+        mCustomAction.script.script = nullptr;
+    }
     
-    // Compile and execute sheep from text.
-    //TODO: Compiler currently requires wrapping braces. Maybe fix that?
-    SheepScript* sheepScript = Services::GetSheep()->Compile("ActionSheep", "{ " + sheepScriptText + " }");
-    if(sheepScript != nullptr)
+    // Populate action.
+    mCustomAction.noun = noun;
+    mCustomAction.verb = verb;
+    mCustomAction.caseLabel = caseLabel;
+
+    // Compile script.
+    mCustomAction.script.text = sheepScriptText;
+    mCustomAction.script.script = Services::GetSheep()->Compile("ActionSheep", "{ " + sheepScriptText + " }");
+
+    // Use normal action flow from here.
+    ExecuteAction(&mCustomAction, finishCallback);
+}
+
+void ActionManager::QueueAction(const std::string& noun, const std::string& verb, std::function<void(const Action*)> finishCallback)
+{
+    // For this noun/verb pair, find the best Action to use in the current scenario.
+    Action* action = GetHighestPriorityAction(noun, verb, VerbType::Normal);
+    if(action == nullptr) { return; }
+
+    // If no action is playing, we can just play it right now.
+    if(!IsActionPlaying())
     {
-        Services::GetSheep()->Execute(sheepScript, [this, sheepScript]() {
-            delete sheepScript;
-            OnActionExecuteFinished();
-        });
+        ExecuteAction(action, finishCallback);
+        return;
     }
-    else
-    {
-        // If sheep fails to compile, still finish the action to avoid softlocking.
-        OnActionExecuteFinished();
-    }
+
+    // Otherwise, queue action to play after.
+    ActionAndCallback entry;
+    entry.action = action;
+    entry.callback = finishCallback;
+    mActionQueue.push_back(entry);
 }
 
 void ActionManager::SkipCurrentAction()
@@ -332,6 +361,17 @@ std::vector<const Action*> ActionManager::GetActions(const std::string& noun, Ve
     {
         verbToActionSpecific.clear();
         AddActionsToMap("LADY_H_ESTELLE", verbType, verbToActionSpecific);
+        for(auto& entry : verbToActionSpecific)
+        {
+            verbToAction[entry.first] = entry.second;
+        }
+    }
+
+    // Also GRACE and MOSELY both matching GRACE_N_MOSE...
+    if(StringUtil::EqualsIgnoreCase(noun, "GRACE") || StringUtil::EqualsIgnoreCase(noun, "MOSELY"))
+    {
+        verbToActionSpecific.clear();
+        AddActionsToMap("GRACE_N_MOSE", verbType, verbToActionSpecific);
         for(auto& entry : verbToActionSpecific)
         {
             verbToAction[entry.first] = entry.second;
@@ -472,50 +512,62 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
 	// Empty condition is automatically met.
 	if(caseLabel.empty()) { return true; }
     
-	// See if any "local" case logic matches this action and execute that case if so.
-	// Do this before "global" cases b/c an action set *could* declare an override of a global...
-	// I'd consider that "not great practice" but it does occur in the game's files a few times.
+	// Is this custom case logic? If so, check the custom case!
 	auto it = mCaseLogic.find(caseLabel);
 	if(it != mCaseLogic.end())
 	{
-        // For local case logic used by topics, we need to manually check topic count.
-        // Most local case logic assumes "&& GetTopicCount(noun, verb) == 0" is implicitly appended for topics.
+        // Annoying problem: for topics, if the topic count is not EXPLICITLY checked as part of the logic, it appears to be IMPLICITLY checked.
+        // This means we need to check topic count and force-fail the case if "GetTopicCount(NOUN, VERB)" is not explicitly in the case logic.
         if(verbType == VerbType::Topic && Services::Get<GameProgress>()->GetTopicCount(noun, verb) != 0)
         {
-            // So, if we get here, it means this topic has already been discussed before. Typically, it means this case is NOT met (return false).
-            // HOWEVER, there is one BIG exception.
-            // If the local case logic EXPLICITLY checks the topic count for this noun/verb pair, we should NOT early out here!
-            bool explicitlyChecksTopicCount = false;
-            size_t pos = 0;
-            while(pos != std::string::npos)
+            // BUT! A caveat! Some verbs specifically are exempt from this logic.
+            // Frustrating but...the logic in the data files looks identical, but they behave differently.
+            // Does not appear to be defined in a data-driven way.
+            static std::string_set_ci sIgnoreImplicitTopicCount = {
+                "T_HANDSHAKE_A",
+                "T_HANDSHAKE_B",
+                "T_HANDSHAKE_C",
+                "T_HANDSHAKE_D",
+                "T_HANDSHAKE_E"
+            };
+            if(sIgnoreImplicitTopicCount.find(verb) == sIgnoreImplicitTopicCount.end())
             {
-                // Find GetTopicCount instance.
-                pos = StringUtil::FindIgnoreCase(it->second.text, "GetTopicCount", pos);
-                if(pos == std::string::npos) { break; }
-
-                // Get open/close parentheses for GetTopicCount.
-                size_t openParen = it->second.text.find('(', pos);
-                size_t closeParen = it->second.text.find(')', openParen);
-
-                // See if our noun & verb occur after the open parentesis and before the close parenthesis.
-                // If so, it would appear this case logic DOES explicitly check topic count.
-                size_t nounPos = StringUtil::FindIgnoreCase(it->second.text, noun, openParen);
-                size_t verbPos = StringUtil::FindIgnoreCase(it->second.text, verb, openParen);
-                if(nounPos < closeParen && verbPos > nounPos && verbPos < closeParen)
+                // So, if we get here, it means this topic has already been discussed before, and it's not on the above ignore list.
+                
+                // Typically, this means this case is NOT met (IMPLICIT count check means we already discussed this topic).
+                // HOWEVER, if the case logic EXPLICITLY checks topic count, we need to run the case logic normally.
+                bool explicitlyChecksTopicCount = false;
+                size_t pos = 0;
+                while(pos != std::string::npos)
                 {
-                    explicitlyChecksTopicCount = true;
-                    break;
+                    // Find GetTopicCount instance.
+                    pos = StringUtil::FindIgnoreCase(it->second.text, "GetTopicCount", pos);
+                    if(pos == std::string::npos) { break; }
+
+                    // Get open/close parentheses for GetTopicCount.
+                    size_t openParen = it->second.text.find('(', pos);
+                    size_t closeParen = it->second.text.find(')', openParen);
+
+                    // See if our noun & verb occur after the open parentesis and before the close parenthesis.
+                    // If so, it would appear this case logic DOES explicitly check topic count.
+                    size_t nounPos = StringUtil::FindIgnoreCase(it->second.text, noun, openParen);
+                    size_t verbPos = StringUtil::FindIgnoreCase(it->second.text, verb, openParen);
+                    if(nounPos < closeParen && verbPos > nounPos && verbPos < closeParen)
+                    {
+                        explicitlyChecksTopicCount = true;
+                        break;
+                    }
+
+                    // We need to loop in case the condition logic contains multiple GetTopicCount checks.
+                    pos = closeParen;
                 }
 
-                // We need to loop in case the condition logic contains multiple GetTopicCount checks.
-                pos = closeParen;
-            }
-
-            // If we don't explicitly check the topic count AND this topic has been discussed before...
-            // ...assume that we can't discuss it again, and so return false! (whew)
-            if(!explicitlyChecksTopicCount)
-            {
-                return false;
+                // If we don't explicitly check the topic count AND this topic has been discussed before...
+                // ...assume that we can't discuss it again, and so return false! (whew)
+                if(!explicitlyChecksTopicCount)
+                {
+                    return false;
+                }
             }
         }
 
@@ -690,7 +742,9 @@ Action* ActionManager::GetHighestPriorityAction(const std::string& noun, const s
                     caseScore = 1;
                 }
                 else if(StringUtil::EqualsIgnoreCase(entry.first, "GABE_ALL") ||
-                        StringUtil::EqualsIgnoreCase(entry.first, "GRACE_ALL"))
+                        StringUtil::EqualsIgnoreCase(entry.first, "GRACE_ALL") ||
+                        StringUtil::EqualsIgnoreCase(entry.first, "GABE_ALL_INV") ||
+                        StringUtil::EqualsIgnoreCase(entry.first, "GRACE_ALL_INV"))
                 {
                     caseScore = 2;
                 }
@@ -723,6 +777,8 @@ Action* ActionManager::GetHighestPriorityAction(const std::string& noun, const s
                     // Custom case logic is only overridden by 1st/2nd/3rd time cases.
                     caseScore = 7;
 
+                    //TODO: This logic doesn't seem entirely accurate - for example, it doesn't work correctly with GABE_ALL_INV vs. IN_SIDNEY_ADD_DATA.
+                    //TODO: Added custom logic above to deal with that, but...we may need to revise this!
                     // If we've already encountered a valid custom case before, AND this custom case is also valid, ties are handled alphabetically.
                     // This seems strange to me, but then again, you've got to handle a tie somehow I guess?
                     if(action != nullptr && highestScore == 7)
@@ -838,5 +894,14 @@ void ActionManager::OnActionExecuteFinished()
         {
             ShowTopicBar(mLastAction->noun);
         }
+    }
+    else if(!IsActionPlaying() && !mActionQueue.empty())
+    {
+        // Retrieve front item, but remove it BEFORE executing.
+        ActionAndCallback front = mActionQueue.front();
+        mActionQueue.erase(mActionQueue.begin());
+
+        // Execute the action.
+        ExecuteAction(front.action, front.callback);
     }
 }

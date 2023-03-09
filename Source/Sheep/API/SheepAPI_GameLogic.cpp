@@ -1,5 +1,7 @@
 #include "SheepAPI_GameLogic.h"
 
+#include "ActionBar.h"
+#include "ActionManager.h"
 #include "GameProgress.h"
 #include "Random.h"
 #include "Services.h"
@@ -68,13 +70,12 @@ shpvoid ClearFlag(const std::string& flagName)
 }
 RegFunc1(ClearFlag, void, string, IMMEDIATE, REL_FUNC);
 
-/*
 shpvoid DumpFlags()
 {
+    Services::Get<GameProgress>()->DumpFlags();
     return 0;
 }
 RegFunc0(DumpFlags, void, IMMEDIATE, DEV_FUNC);
-*/
 
 int GetGameVariableInt(const std::string& varName)
 {
@@ -212,14 +213,35 @@ shpvoid SetChatCount(std::string noun, int count)
 }
 RegFunc2(SetChatCount, void, string, int, IMMEDIATE, DEV_FUNC);
 
-/*
-shpvoid SetGameTimer(std::string noun, std::string verb, int milliseconds)
+shpvoid SetVerbModal(int modalState)
 {
-    std::cout << "SetGameTimer" << std::endl;
+    Services::Get<ActionManager>()->GetActionBar()->SetAllowDismiss(modalState == 0);
+    return 0;
+}
+RegFunc1(SetVerbModal, void, int, IMMEDIATE, REL_FUNC);
+
+shpvoid StartVerbCancel()
+{
+    Services::Get<ActionManager>()->GetActionBar()->SetAllowCancel(true);
+    return 0;
+}
+RegFunc0(StartVerbCancel, void, IMMEDIATE, REL_FUNC);
+
+shpvoid StopVerbCancel()
+{
+    Services::Get<ActionManager>()->GetActionBar()->SetAllowCancel(false);
+    return 0;
+}
+RegFunc0(StopVerbCancel, void, IMMEDIATE, REL_FUNC);
+
+shpvoid SetGameTimer(const std::string& noun, const std::string& verb, int milliseconds)
+{
+    Timers::AddTimerMilliseconds(static_cast<unsigned int>(milliseconds), [noun, verb](){
+        Services::Get<ActionManager>()->QueueAction(noun, verb);
+    });
     return 0;
 }
 RegFunc3(SetGameTimer, void, string, string, int, IMMEDIATE, REL_FUNC);
-*/
 
 shpvoid SetTimerMs(int milliseconds)
 {

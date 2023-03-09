@@ -1,6 +1,6 @@
 #include "Timers.h"
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 /*static*/ std::vector<Timers::Timer> Timers::mTimers;
 
@@ -41,6 +41,7 @@
         if(timer.secondsRemaining > 0.0f)
         {
             timer.secondsRemaining -= deltaTime;
+            //printf("Time remaining: %f\n", timer.secondsRemaining);
 
             // Timer is complete! Execute callbacks.
             if(timer.secondsRemaining <= 0.0f)

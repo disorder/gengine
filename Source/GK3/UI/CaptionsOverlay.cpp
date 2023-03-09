@@ -3,6 +3,7 @@
 #include "Font.h"
 #include "IniParser.h"
 #include "SaveManager.h"
+#include "Scene.h"
 #include "TextAsset.h"
 #include "Texture.h"
 #include "UICanvas.h"
@@ -27,10 +28,10 @@
     gSaveManager.GetPrefs()->Set(PREFS_ENGINE, PREF_CAPTIONS, enabled);
 }
 
-CaptionsOverlay::CaptionsOverlay() : Actor(Actor::TransformType::RectTransform)
+CaptionsOverlay::CaptionsOverlay() : Actor(TransformType::RectTransform)
 {
     // Draw order should be equal to the status overlay.
-    mCanvas = AddComponent<UICanvas>(8);
+    AddComponent<UICanvas>(8);
 
     // Canvas takes up entire screen.
     RectTransform* rectTransform = GetComponent<RectTransform>();
@@ -59,10 +60,6 @@ CaptionsOverlay::CaptionsOverlay() : Actor(Actor::TransformType::RectTransform)
                 }
             }
         }
-
-        // Kind of annoying HACK, but the speaker is set to "UNKNOWN" for most voiceovers.
-        // We want this to map to the VOICEOVER font.
-        mSpeakerToFont["UNKNOWN"] = mSpeakerToFont["VOICEOVER"];
     }
     Services::GetAssets()->UnloadText(fontColors);
 }
@@ -76,17 +73,15 @@ void CaptionsOverlay::AddCaption(const std::string& captionText, const std::stri
     if(mFreeCaptions.empty())
     {
         // Make a new one.
-        caption.actor = new Actor(Actor::TransformType::RectTransform);
-        caption.actor->GetTransform()->SetParent(mCanvas->GetRectTransform());
+        caption.actor = new Actor(TransformType::RectTransform);
+        caption.actor->GetTransform()->SetParent(GetTransform());
 
         // Add backing image. This is just a fully opaque black background.
         caption.backing = caption.actor->AddComponent<UIImage>();
-        mCanvas->AddWidget(caption.backing);
         caption.backing->SetTexture(&Texture::Black);
 
         // Add label. This should fill space horizontally, with horizontal centering, top alignment.
         caption.label = caption.actor->AddComponent<UILabel>();
-        mCanvas->AddWidget(caption.label);
         caption.label->SetHorizonalAlignment(HorizontalAlignment::Center);
         caption.label->SetHorizontalOverflow(HorizontalOverflow::Wrap);
         caption.label->SetVerticalAlignment(VerticalAlignment::Top);
@@ -109,13 +104,27 @@ void CaptionsOverlay::AddCaption(const std::string& captionText, const std::stri
     // Make sure the caption object is active, especially when recycling.
     caption.actor->SetActive(true);
 
-    // Set font based on speaker.
+    // Determine which font to use.
+    // There's an initial default that's used if no other case matches.
     Font* font = mDefaultFont;
-    auto it = mSpeakerToFont.find(speaker);
-    if(it != mSpeakerToFont.end())
+
+    // If "UNKNOWN" is specified, we assume the speaker is whoever is Ego.
+    // Otherwise, grab from the font list.
+    std::string_map_ci<Font*>::iterator fontIt;
+    if(StringUtil::EqualsIgnoreCase(speaker, "UNKNOWN"))
     {
-        font = it->second;
+        fontIt = mSpeakerToFont.find(Scene::GetEgoName());
     }
+    else
+    {
+        fontIt = mSpeakerToFont.find(speaker);
+    }
+    if(fontIt != mSpeakerToFont.end())
+    {
+        font = fontIt->second;
+    }
+
+    // Set font based on speaker.
     caption.label->SetFont(font);
 
     // Set caption rect height based on font used and amount of text lines needed.
@@ -171,6 +180,9 @@ void CaptionsOverlay::HideAll()
         // Deactivate the freed caption so it's no longer visible.
         mFreeCaptions.back().actor->SetActive(false);
     }
+
+    // Clear advance timer, since all are hidden.
+    mAdvanceTimer = 0.0f;
 }
 
 void CaptionsOverlay::OnUpdate(float deltaTime)

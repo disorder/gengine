@@ -21,6 +21,7 @@ class GKActor;
 class GKObject;
 class GKProp;
 class Heading;
+class Texture;
 class WalkerBoundary;
 
 class Walker : public Component
@@ -29,12 +30,17 @@ class Walker : public Component
 public:
 	Walker(Actor* owner);
 
-    void SetCharacterConfig(const CharacterConfig& characterConfig) { mCharConfig = &characterConfig; }
-	
+    void SetWalkerBoundary(WalkerBoundary* walkerBoundary) { mWalkerBoundary = walkerBoundary; }
+    void SetCharacterConfig(const CharacterConfig& characterConfig);
+    void SetWalkAnims(Animation* startAnim, Animation* loopAnim,
+                      Animation* startTurnLeftAnim, Animation* startTurnRightAnim);
+
 	void WalkTo(const Vector3& position, std::function<void()> finishCallback);
 	void WalkTo(const Vector3& position, const Heading& heading, std::function<void()> finishCallback);
     void WalkToGas(const Vector3& position, const Heading& heading, std::function<void()> finishCallback);
     void WalkToSee(GKObject* target, std::function<void()> finishCallback);
+
+    void WalkOutOfRegion(int regionIndex, const Vector3& exitPosition, const Heading& exitHeading, std::function<void()> finishCallback);
 
     void SkipToEnd();
 
@@ -42,7 +48,7 @@ public:
     bool IsWalking() const { return mWalkActions.size() > 0; }
     Vector3 GetDestination() const { return mPath.size() > 0 ? mPath.front() : Vector3::Zero; }
 
-    void SetWalkerBoundary(WalkerBoundary* walkerBoundary) { mWalkerBoundary = walkerBoundary; }
+    Texture* GetFloorTypeWalkingOn() const;
 
 protected:
 	void OnUpdate(float deltaTime) override;
@@ -84,11 +90,17 @@ private:
 	
 	// Walker's owner, as a GKActor.
 	GKActor* mGKOwner = nullptr;
-	
-	// Config is vital for walker to function - contains things like
-	// walk anims and hip position data.
-	const CharacterConfig* mCharConfig = nullptr;
-	
+
+    // Config is vital for walker to function - contains things like walk anims and hip position data.
+    const CharacterConfig* mCharConfig = nullptr;
+
+    // Walk animations currently in use.
+    // Need to store separate from CharacterConfig because they can be overridden in some circumstances.
+    Animation* mWalkStartAnim = nullptr;
+    Animation* mWalkLoopAnim = nullptr;
+    Animation* mWalkStartTurnLeftAnim = nullptr;
+    Animation* mWalkStartTurnRightAnim = nullptr;
+
     // Walker boundary currently being used.
     WalkerBoundary* mWalkerBoundary = nullptr;
     
@@ -98,7 +110,11 @@ private:
 	
 	// A target (e.g. model) that we are walking to see.
     GKObject* mWalkToSeeTarget = nullptr;
-	
+
+    // A callback for exiting a region.
+    int mExitRegionIndex = -1;
+    std::function<void()> mExitRegionCallback = nullptr;
+
 	// A callback for when the end of a path is reached.
 	std::function<void()> mFinishedPathCallback = nullptr;
 

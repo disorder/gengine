@@ -12,12 +12,23 @@
 #include "Model.h"
 #include "OptionBar.h"
 #include "Ray.h"
+#include "SaveManager.h"
 #include "Scene.h"
 #include "Sphere.h"
 #include "StringUtil.h"
 #include "Triangle.h"
 #include "VerbManager.h"
 #include "UICanvas.h"
+
+/*static*/ bool GameCamera::IsCameraGlideEnabled()
+{
+    return gSaveManager.GetPrefs()->GetBool(PREFS_ENGINE, PREF_CAMERA_GLIDE, true);
+}
+
+/*static*/ void GameCamera::SetCameraGlideEnabled(bool enabled)
+{
+    gSaveManager.GetPrefs()->Set(PREFS_ENGINE, PREF_CAMERA_GLIDE, enabled);
+}
 
 GameCamera::GameCamera()
 {
@@ -36,6 +47,47 @@ void GameCamera::SetAngle(const Vector2& angle)
 void GameCamera::SetAngle(float yaw, float pitch)
 {
 	SetRotation(Quaternion(Vector3::UnitY, yaw) * Quaternion(Vector3::UnitX, pitch));
+}
+
+void GameCamera::Glide(const Vector3& position, const Vector2& angle, std::function<void()> callback)
+{
+    mGliding = true;
+    mEndGlideCallback = callback;
+
+    mGlidePosition = position;
+    mGlideRotation = Quaternion(Vector3::UnitY, angle.x) * Quaternion(Vector3::UnitX, angle.y);
+
+    mGlideStartPos = GetTransform()->GetPosition();
+    mGlideStartRot = GetTransform()->GetRotation();
+
+    mGlideTimer = 0.0f;
+    
+    // A glide request would cancel any inspect that was occurring.
+    mInspectNoun.clear();
+}
+
+void GameCamera::Inspect(const std::string& noun, const Vector3& position, const Vector2& angle, std::function<void()> callback)
+{
+    // Save spot we were at when we started to inspect.
+    mInspectStartPos = GetTransform()->GetPosition();
+    mInspectStartRot = GetTransform()->GetRotation();
+
+    // Glide to the inspect position/angle.
+    Glide(position, angle, callback);
+
+    // We ARE inspecting something. (Do this after calling Glide b/c that clears this value).
+    mInspectNoun = noun;
+}
+
+void GameCamera::Uninspect(std::function<void()> callback)
+{
+    if(!mInspectNoun.empty())
+    {
+        Glide(mInspectStartPos, Vector2::Zero, callback);
+        mGlideRotation = mInspectStartRot; //HACK: Just overwrite with saved rotation here.
+
+        mInspectNoun.clear();
+    }
 }
 
 void GameCamera::OnUpdate(float deltaTime)
@@ -70,8 +122,7 @@ void GameCamera::OnUpdate(float deltaTime)
     */
     
     // Perform scene-only updates (camera movement, click-to-interact), if scene is active and no action is playing.
-    bool actionPlaying = Services::Get<ActionManager>()->IsActionPlaying();
-    if(!actionPlaying && mSceneActive)
+    if(mSceneActive)
     {
         SceneUpdate(deltaTime);
     }
@@ -100,6 +151,7 @@ void GameCamera::OnUpdate(float deltaTime)
     if(!Services::GetInput()->IsTextInput())
     {
         // Some keyboard shortcuts are only available when an action is not playing.
+        bool actionPlaying = Services::Get<ActionManager>()->IsActionPlaying();
         if(!actionPlaying)
         {
             // If 'I' is pressed, toggle inventory.
@@ -139,6 +191,45 @@ void GameCamera::OnUpdate(float deltaTime)
 
 void GameCamera::SceneUpdate(float deltaTime)
 {
+    // Handle camera glide behavior.
+    if(mGliding)
+    {
+        float t = Math::Clamp(mGlideTimer / kGlideDuration, 0.0f, 1.0f);
+        if(!IsCameraGlideEnabled())
+        {
+            t = 1.0f;
+        }
+        
+        // Interpolate towards desired position.
+        GetTransform()->SetPosition(Vector3::Lerp(mGlideStartPos, mGlidePosition, t));
+
+        // Rotate towards desired rotation.
+        Quaternion newRotation;
+        Quaternion::Slerp(newRotation, mGlideStartRot, mGlideRotation, t);
+        GetTransform()->SetRotation(newRotation);
+
+        // Increment timer.
+        mGlideTimer += deltaTime;
+
+        // If reached end of glide, stop.
+        if(t >= 1.0f)
+        {
+            mGliding = false;
+            if(mEndGlideCallback)
+            {
+                mEndGlideCallback();
+            }
+        }
+        return;
+    }
+
+    // Nothing else can happen while an action is occurring.
+    bool actionPlaying = Services::Get<ActionManager>()->IsActionPlaying();
+    if(actionPlaying)
+    {
+        return;
+    }
+
     // It's possible our height was changed due to a script moving the camera.
     // Make sure height is correct before we do our updates.
     float startFloorY = GEngine::Instance()->GetScene()->GetFloorY(GetPosition());
@@ -346,7 +437,13 @@ void GameCamera::SceneUpdate(float deltaTime)
     
     // Apply pitch movement.
     GetTransform()->Rotate(GetRight(), -pitchSpeed * deltaTime, Transform::Space::World);
-    
+
+    // If we were inspecting something, but we move the camera, that "breaks" the inspect state.
+    if(moveOffset.GetLengthSq() > 1)
+    {
+        mInspectNoun.clear();
+    }
+
     // Raycast to the ground and always maintain a desired height.
     //TODO: This does not apply when camera boundaries are disabled!
     //TODO: Doesn't apply when middle mouse button is held???

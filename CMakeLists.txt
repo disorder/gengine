@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
 
-project(gengine VERSION 0.0.6
+project(gengine VERSION 0.0.7
                 DESCRIPTION "Gabriel Knight 3 game engine"
                 LANGUAGES C CXX)
 
@@ -48,6 +48,7 @@ target_include_directories(gk3 PRIVATE
     Source/GK3/Actions
     Source/GK3/Actors
     Source/GK3/Animation
+    Source/GK3/Scene
     Source/GK3/UI
     Source/Input
     Source/IO
@@ -61,6 +62,7 @@ target_include_directories(gk3 PRIVATE
     Source/Sheep/API
     Source/Sheep/Compiler
     Source/Sheep/Machine
+    Source/Tools
     Source/UI
     Source/Util
     Source/Util/Threads
@@ -74,8 +76,9 @@ target_include_directories(gk3 PRIVATE
     Libraries/Flex/include
     Libraries/fmod/inc
     Libraries/GLEW/include
+    Libraries/imgui
+    Libraries/imgui/backends
     Libraries/minilzo
-    Libraries/SDL/include
     Libraries/stb
     Libraries/zlib/include
 
@@ -100,6 +103,9 @@ endif()
 
 # Library locations/linking/copying.
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    find_package(SDL2 REQUIRED)
+    include_directories(${SDL2_INCLUDE_DIRS})
+
     # Specify library search directories.
     target_link_directories(gk3 PRIVATE
         Libraries/fmod/lib/lin
@@ -115,14 +121,19 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         SDL2                                        # SD
         OpenGL                                      # OpenGL
         pthread                                     # pthread
+        dl
     )
 elseif(WIN32)
+    target_include_directories(gk3 PRIVATE
+        Libraries/SDL/win/include
+    )
+
     # Specify library search directories.
     target_link_directories(gk3 PRIVATE
         Libraries/ffmpeg/lib/win
         Libraries/fmod/lib/win
         Libraries/GLEW/lib/win/x86
-        Libraries/SDL/lib/win/x86
+        Libraries/SDL/win/lib/x86
         Libraries/zlib/lib/win/x86
     )
 
@@ -132,10 +143,14 @@ elseif(WIN32)
         fmod                                        # fmod
         glew32                                      # GLEW
         zlib                                        # zlib
-        SDL2                                        # SD
+        SDL2                                        # SDL
         opengl32                                    # OpenGL
     )
 elseif(APPLE)
+    target_include_directories(gk3 PRIVATE
+        Libraries/SDL/SDL2.framework/Headers
+    )
+
     # Specify library search directories.
     target_link_directories(gk3 PRIVATE
         Libraries/ffmpeg/lib/mac
@@ -265,5 +280,19 @@ set(STB_SOURCES
 target_sources(gk3 PRIVATE ${STB_SOURCES})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${STB_SOURCES})
 
+# Add imgui library (source only).
+set(IMGUI_SOURCES
+    Libraries/imgui/imgui.cpp
+    Libraries/imgui/imgui_demo.cpp
+    Libraries/imgui/imgui_draw.cpp
+    Libraries/imgui/imgui_tables.cpp
+    Libraries/imgui/imgui_widgets.cpp
+    Libraries/imgui/backends/imgui_impl_opengl3.cpp
+    Libraries/imgui/backends/imgui_impl_sdl.cpp
+)
+target_sources(gk3 PRIVATE ${IMGUI_SOURCES})
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${IMGUI_SOURCES})
+
 # Add tests subdirectory (creates the "tests" target).
 add_subdirectory(Tests)
+

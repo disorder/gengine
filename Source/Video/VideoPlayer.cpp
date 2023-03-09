@@ -6,6 +6,7 @@
 #include "UICanvas.h"
 #include "UIImage.h"
 #include "VideoState.h"
+#include "Window.h"
 
 TYPE_DEF_BASE(VideoPlayer);
 
@@ -24,9 +25,9 @@ VideoPlayer::~VideoPlayer()
 void VideoPlayer::Initialize()
 {
     // Create canvas actor that sticks around forever.
-    mVideoCanvasActor = new Actor(Actor::TransformType::RectTransform);
+    mVideoCanvasActor = new Actor(TransformType::RectTransform);
     mVideoCanvasActor->SetIsDestroyOnLoad(false);
-    UICanvas* canvas = mVideoCanvasActor->AddComponent<UICanvas>();
+    mVideoCanvasActor->AddComponent<UICanvas>();
     
     // Size canvas rect so it always fills the entire screen.
     RectTransform* canvasRectTransform = mVideoCanvasActor->GetComponent<RectTransform>();
@@ -36,20 +37,17 @@ void VideoPlayer::Initialize()
     
     // When a video plays, a background image either tints or completely blocks whatever's behind the video.
     mVideoBackgroundImage = mVideoCanvasActor->AddComponent<UIImage>();
-    canvas->AddWidget(mVideoBackgroundImage);
     
     // Create black background image, used for letterbox effect.
-    Actor* videoBackgroundActor = new Actor(Actor::TransformType::RectTransform);
+    Actor* videoBackgroundActor = new Actor(TransformType::RectTransform);
     videoBackgroundActor->GetTransform()->SetParent(mVideoCanvasActor->GetTransform());
     mVideoLetterbox = videoBackgroundActor->AddComponent<UIImage>();
     mVideoLetterbox->SetColor(Color32::Black);
-    canvas->AddWidget(mVideoLetterbox);
     
     // Create video image, which shows actual video playback.
-    Actor* videoActor = new Actor(Actor::TransformType::RectTransform);
+    Actor* videoActor = new Actor(TransformType::RectTransform);
     videoActor->GetTransform()->SetParent(mVideoCanvasActor->GetTransform());
     mVideoImage = videoActor->AddComponent<UIImage>();
-    canvas->AddWidget(mVideoImage);
     
     // Disable video UI until a movie is played.
     mVideoCanvasActor->SetActive(false);
@@ -83,7 +81,7 @@ void VideoPlayer::Update()
             break;
             
         case SizeMode::Fullscreen:
-            videoSize = Services::GetRenderer()->GetWindowSize();
+            videoSize = Window::GetSize();
             break;
             
         case SizeMode::Custom:

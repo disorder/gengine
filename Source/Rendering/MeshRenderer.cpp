@@ -231,6 +231,7 @@ bool MeshRenderer::Raycast(const Ray& ray, RaycastHit& hitInfo)
             // So, convert "t" back to world space before returning.
             Vector3 hitPoint = localRay.GetPoint(hitInfo.t);
             Vector3 hitPointWorldPos = meshToWorldMatrix.TransformPoint(hitPoint);
+            //Debug::DrawSphere(Sphere(hitPointWorldPos, 1.0f), Color32::Red, 1.0f);
             hitInfo.t = (ray.origin - hitPointWorldPos).GetLength();
 			return true;
 		}
@@ -267,7 +268,7 @@ AABB MeshRenderer::GetAABB() const
     return toReturn;
 }
 
-void MeshRenderer::DebugDrawAABBs()
+void MeshRenderer::DebugDrawAABBs(const Color32& color, const Color32& meshColor)
 {
     // The local-to-world matrix for this Actor is required for all meshes.
 	Matrix4 localToWorldMatrix = GetOwner()->GetTransform()->GetLocalToWorldMatrix();
@@ -279,11 +280,11 @@ void MeshRenderer::DebugDrawAABBs()
 		Matrix4 meshToWorldMatrix = localToWorldMatrix * mesh->GetMeshToLocalMatrix();
 	
 		// Debug draw the AABB.
-        Debug::DrawAABB(mesh->GetAABB(), Color32::Magenta, 0.0f, &meshToWorldMatrix);
+        Debug::DrawAABB(mesh->GetAABB(), meshColor, 0.0f, &meshToWorldMatrix);
 	}
 
     // Also draw the MeshRenderer's OVERALL AABB in a different color.
-    Debug::DrawAABB(GetAABB(), Color32::Orange);
+    Debug::DrawAABB(GetAABB(), color);
 }
 
 int MeshRenderer::GetIndexFromMeshSubmeshIndexes(int meshIndex, int submeshIndex)

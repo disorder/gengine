@@ -14,6 +14,7 @@
 #include "Scene.h"
 #include "Services.h"
 #include "SoundtrackPlayer.h"
+#include "Texture.h"
 #include "VertexAnimation.h"
 #include "VertexAnimator.h"
 
@@ -53,6 +54,24 @@ void VertexAnimNode::Play(AnimationState* animState)
                 params.absoluteHeading = Heading::FromDegrees(absoluteWorldToModelHeading - absoluteModelToActorHeading);
             }
 
+            // If not an absolute anim, see if the animation's name is prefixed by the name of a model in the scene.
+            // If so...we will treat that model as our parent (so, we move/rotate to match them).
+            // (This feels like a HACK, but the original game also does this parenting, but the assets themselves have no flags/indicators about it.)
+            // (So, they must do it in some similar way to this, unless I'm missing something?)
+            if(!absolute)
+            {
+                // e.g. Grab the "ROX" from "ROX_SPRAYANDWIPE2.ANM".
+                std::string prefix = animState->params.animation->GetName().substr(0, 3);
+
+                // If a parent exists, and it isn't ourselves, use it!
+                GKObject* parent = GEngine::Instance()->GetScene()->GetSceneObjectByModelName(prefix);
+                if(parent != nullptr && parent != obj)
+                {
+                    params.parent = parent->GetMeshRenderer()->GetOwner();
+                    //printf("Found parent %s for %s\n", parent->GetName().c_str(), obj->GetName().c_str());
+                }
+            }
+
             // Move anims allow the actor associated with the model to stay in its final position when the animation ends, instead of reverting.
             // Absolute anims are always "move anims".
             params.allowMove = animState->params.allowMove || absolute;
@@ -67,7 +86,7 @@ void VertexAnimNode::Play(AnimationState* animState)
 	}
 }
 
-void VertexAnimNode::Sample(Animation* anim, int frame)
+void VertexAnimNode::Sample(int frame)
 {
     if(vertexAnimation != nullptr)
     {
@@ -108,6 +127,11 @@ void VertexAnimNode::Stop()
 	}
 }
 
+bool VertexAnimNode::AppliesToModel(const std::string& modelName)
+{
+    return vertexAnimation != nullptr && StringUtil::EqualsIgnoreCase(modelName, vertexAnimation->GetModelName());
+}
+
 Vector3 VertexAnimNode::CalcAbsolutePosition()
 {
     // Remember, when playing an absolute animation, the model actor's origin IS NOT necessarily equal to the model's position!
@@ -130,10 +154,20 @@ void SceneTextureAnimNode::Play(AnimationState* animState)
 	}
 }
 
+void SceneTextureAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void SceneModelVisibilityAnimNode::Play(AnimationState* animState)
 {
 	//TODO: Ensure sceneName matches loaded scene name?
 	GEngine::Instance()->GetScene()->SetSceneModelVisibility(sceneModelName, visible);
+}
+
+void SceneModelVisibilityAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }
 
 void ModelTextureAnimNode::Play(AnimationState* animState)
@@ -154,6 +188,11 @@ void ModelTextureAnimNode::Play(AnimationState* animState)
 			}
 		}
 	}
+}
+
+void ModelTextureAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }
 
 void ModelVisibilityAnimNode::Play(AnimationState* animState)
@@ -182,6 +221,11 @@ void ModelVisibilityAnimNode::Play(AnimationState* animState)
 	}
 }
 
+void ModelVisibilityAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void SoundAnimNode::Play(AnimationState* animState)
 {
     if(Services::Get<ActionManager>()->IsSkippingCurrentAction()) { return; }
@@ -201,7 +245,17 @@ void SoundAnimNode::Play(AnimationState* animState)
             GKObject* obj = GEngine::Instance()->GetScene()->GetSceneObjectByModelName(modelName);
             if(obj != nullptr)
             {
-                playPosition = obj->GetWorldPosition();
+                // Models in GK3 are often authored such that the "visual" position of the model does not match the world position.
+                // It's usually more accurate to find the center-point of the mesh's AABB.
+                MeshRenderer* meshRenderer = obj->GetMeshRenderer();
+                if(meshRenderer != nullptr)
+                {
+                    playPosition = meshRenderer->GetAABB().GetCenter();
+                }
+                else
+                {
+                    playPosition = obj->GetWorldPosition();
+                }
             }
         }
         
@@ -240,10 +294,11 @@ void FootstepAnimNode::Play(AnimationState* animState)
 	if(actor != nullptr)
 	{
 		// Get the actor's shoe type.
-		std::string shoeType = "Male Leather";
+        std::string shoeType = actor->GetShoeType();
 		
 		// Query the texture used on the floor where the actor is walking.
-		std::string floorTextureName = "carpet1";
+        Texture* floorTexture = actor->GetWalker()->GetFloorTypeWalkingOn();
+		std::string floorTextureName = floorTexture != nullptr ? floorTexture->GetNameNoExtension() : "carpet1";
 		
 		// Get the footstep sound.
 		Audio* footstepAudio = Services::Get<FootstepManager>()->GetFootstep(shoeType, floorTextureName);
@@ -265,10 +320,11 @@ void FootscuffAnimNode::Play(AnimationState* animState)
 	if(actor != nullptr)
 	{
 		// Get the actor's shoe type.
-		std::string shoeType = "Male Leather";
+		std::string shoeType = actor->GetShoeType();
 		
-		// Query the texture used on the floor where the actor is walking.
-		std::string floorTextureName = "carpet1";
+        // Query the texture used on the floor where the actor is walking.
+        Texture* floorTexture = actor->GetWalker()->GetFloorTypeWalkingOn();
+        std::string floorTextureName = floorTexture != nullptr ? floorTexture->GetNameNoExtension() : "carpet1";
 		
 		// Get the scuff sound.
 		Audio* footscuffAudio = Services::Get<FootstepManager>()->GetFootscuff(shoeType, floorTextureName);
@@ -317,6 +373,11 @@ void CameraAnimNode::Play(AnimationState* animState)
     GEngine::Instance()->GetScene()->SetCameraPosition(cameraPositionName);
 }
 
+void CameraAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void FaceTexAnimNode::Play(AnimationState* animState)
 {
 	// Get actor using the specified noun.
@@ -332,6 +393,11 @@ void FaceTexAnimNode::Play(AnimationState* animState)
 	}
 }
 
+void FaceTexAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void UnFaceTexAnimNode::Play(AnimationState* animState)
 {
 	// Get actor using the specified noun.
@@ -340,6 +406,11 @@ void UnFaceTexAnimNode::Play(AnimationState* animState)
 	{
 		actor->GetFaceController()->Clear(faceElement);
 	}
+}
+
+void UnFaceTexAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }
 
 void LipSyncAnimNode::Play(AnimationState* animState)
@@ -357,9 +428,19 @@ void LipSyncAnimNode::Play(AnimationState* animState)
 	}
 }
 
+void LipSyncAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void GlanceAnimNode::Play(AnimationState* animState)
 {
 	std::cout << actorNoun << " GLANCE AT " << position << std::endl;
+}
+
+void GlanceAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }
 
 void MoodAnimNode::Play(AnimationState* animState)
@@ -367,9 +448,19 @@ void MoodAnimNode::Play(AnimationState* animState)
 	std::cout << actorNoun << " IN MOOD " << moodName << std::endl;
 }
 
+void MoodAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void ExpressionAnimNode::Play(AnimationState* animState)
 {
     std::cout << actorNoun << " HAS EXPRESSION " << expressionName << std::endl;
+}
+
+void ExpressionAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }
 
 void SpeakerAnimNode::Play(AnimationState* animState)
@@ -377,9 +468,19 @@ void SpeakerAnimNode::Play(AnimationState* animState)
 	Services::Get<DialogueManager>()->SetSpeaker(actorNoun);
 }
 
+void SpeakerAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void CaptionAnimNode::Play(AnimationState* animState)
 {
     gGK3UI.AddCaption(caption, Services::Get<DialogueManager>()->GetSpeaker());
+}
+
+void CaptionAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }
 
 void SpeakerCaptionAnimNode::Play(AnimationState* animState)
@@ -394,14 +495,29 @@ void SpeakerCaptionAnimNode::Play(AnimationState* animState)
     gGK3UI.FinishCaption(duration);
 }
 
+void SpeakerCaptionAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void DialogueCueAnimNode::Play(AnimationState* animState)
 {
 	Services::Get<DialogueManager>()->TriggerDialogueCue();
     gGK3UI.FinishCaption();
 }
 
+void DialogueCueAnimNode::Sample(int frame)
+{
+    Play(nullptr);
+}
+
 void DialogueAnimNode::Play(AnimationState* animState)
 {
     //TODO: Unsure if "numLines" and "playFidgets" are correct here.
     Services::Get<DialogueManager>()->StartDialogue(licensePlate, 1, false, nullptr);
+}
+
+void DialogueAnimNode::Sample(int frame)
+{
+    Play(nullptr);
 }

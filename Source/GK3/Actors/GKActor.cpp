@@ -232,7 +232,7 @@ void GKActor::WalkToAnimationStart(Animation* anim, std::function<void()> finish
     VertexAnimationTransformPose transformPose = vertexAnimNode->vertexAnimation->SampleTransformPose(0, mCharConfig->hipAxesMeshIndex);
 
     // If this is an absolute animation, the above position needs to be converted to world space.
-    Matrix4 transformMatrix = transformPose.mMeshToLocalMatrix;
+    Matrix4 transformMatrix = transformPose.meshToLocalMatrix;
     if(vertexAnimNode->absolute)
     {
         Vector3 animWorldPos = vertexAnimNode->CalcAbsolutePosition();
@@ -271,6 +271,19 @@ void GKActor::SnapToFloor()
         Vector3 pos = GetPosition();
         pos.y = scene->GetFloorY(pos);
         SetPosition(pos);
+    }
+}
+
+const std::string& GKActor::GetShoeType() const
+{
+    if(mCharConfig != nullptr)
+    {
+        return mCharConfig->shoeType;
+    }
+    else
+    {
+        static std::string defaultShoeType = "Male Leather";
+        return defaultShoeType;
     }
 }
 

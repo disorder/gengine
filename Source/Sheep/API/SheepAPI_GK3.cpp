@@ -2,6 +2,7 @@
 
 #include "GEngine.h"
 #include "GK3UI.h"
+#include "Sidney.h"
 
 using namespace std;
 
@@ -33,6 +34,20 @@ shpvoid ShowFingerprintInterface(const std::string& nounName)
     return 0;
 }
 RegFunc1(ShowFingerprintInterface, void, string, IMMEDIATE, REL_FUNC);
+
+shpvoid ShowSidney()
+{
+    gGK3UI.ShowSidney();
+    return 0;
+}
+RegFunc0(ShowSidney, void, IMMEDIATE, REL_FUNC);
+
+int DoesSidneyFileExist(const std::string& fileName)
+{
+    bool exists = gGK3UI.GetSidney()->HasFile(fileName);
+    return exists ? 1 : 0;
+}
+RegFunc1(DoesSidneyFileExist, int, string, IMMEDIATE, REL_FUNC);
 
 shpvoid FollowOnDrivingMap(int followState)
 {

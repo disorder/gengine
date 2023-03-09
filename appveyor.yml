@@ -5,7 +5,7 @@
 # The version number being built. Should match version in CMake/at runtime.
 # This is the ACTUAL version number used when uploading to GitHub Releases.
 environment:
-  APP_VERSION: 0.0.6
+  APP_VERSION: 0.0.7
 
 # Appveyor version number - used only for the unique build version required by Appveyor.
 version: $(APP_VERSION)-{build}
@@ -110,7 +110,7 @@ deploy:
     description: 'GEngine version $(APP_VERSION) for Mac and Windows'
     force_update: true # allows multiple jobs to upload artifacts to same GitHub release
     auth_token:
-      secure: DuQUXjm31E4YjETAHvTdtMj9VbrNVTId39ObmB95ZXXU7oJz8j4ChuF+S4hnC7Qw
+      secure: +FLIpiKwFVgZmhUkmcDZK9P727eAjboXu+dfZ5G8xnNETVhPbRkIV57ckpcSr6Rz
 
 # Scripts to run after deployment.
 #after_deploy:
