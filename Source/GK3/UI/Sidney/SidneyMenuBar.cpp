@@ -88,20 +88,27 @@ void SidneyMenuBar::Update()
     // Iterate and update each dropdown.
     for(Dropdown& dropdown : mDropdowns)
     {
-        // Show the dropdowns options if the root is hovered.
-        bool showOptions = dropdown.rootButton->IsHovered();
+        // Assume not showing options to start.
+        bool showOptions = false;
 
-        // If the root is not hovered, BUT the dropdown options are active
-        // and one of THEM is hovered, we want to show the options!
-        if(!showOptions && !dropdown.options.empty() && dropdown.options.back()->IsActive())
+        // Only if interactive, consider showing options.
+        if(mInteractive)
         {
-            for(SidneyButton* option : dropdown.options)
+            // Show the dropdowns options if the root is hovered.
+            showOptions = dropdown.enabled && dropdown.rootButton->IsHovered();
+
+            // If the root is not hovered, BUT the dropdown options are active
+            // and one of THEM is hovered, we want to show the options!
+            if(!showOptions && !dropdown.options.empty() && dropdown.options.back()->IsActive())
             {
-                // Hovered OR animating (after a button press).
-                if(option->GetButton()->IsHovered() || option->IsAnimating())
+                for(SidneyButton* option : dropdown.options)
                 {
-                    showOptions = true;
-                    break;
+                    // Hovered OR animating (after a button press).
+                    if(option->GetButton()->IsHovered() || option->IsAnimating())
+                    {
+                        showOptions = true;
+                        break;
+                    }
                 }
             }
         }
@@ -171,10 +178,25 @@ void SidneyMenuBar::AddDropdownChoice(const std::string& label, std::function<vo
     SidneyButton* button = new SidneyButton(mDropdowns.back().rootButton->GetOwner());
     button->SetText(label);
     button->SetTextAlignment(HorizontalAlignment::Left);
-    button->SetFont(gAssetManager.LoadFont("SID_PDN_10_L.FON"));
+    button->SetFont(gAssetManager.LoadFont("SID_PDN_10_L.FON"), gAssetManager.LoadFont("SID_PDN_10_UL.FON"));
     button->GetRectTransform()->SetSizeDeltaY(button->GetRectTransform()->GetSizeDelta().y + 2); // looks better with a little extra height
     button->SetWidth(100.0f);
-    button->SetPressCallback(pressCallback);
+    button->SetPressCallback([this, button, pressCallback](){
+        if(pressCallback != nullptr)
+        {
+            pressCallback();
+        }
+
+        // After pressing a dropdown choice, the dropdown should close.
+        // Easiest is just make sure all dropdowns are closed at this point.
+        for(auto& dropdown : mDropdowns)
+        {
+            for(auto& choice : dropdown.options)
+            {
+                choice->SetActive(false);
+            }
+        }
+    });
 
     // This warrants more investigation, but these dropdown buttons *appear* to use different SFX on each run of the game.
     // But the sound seems consistent for the entire duration of the game's run.
@@ -191,6 +213,7 @@ void SidneyMenuBar::SetDropdownEnabled(size_t index, bool enabled)
 {
     if(index >= mDropdowns.size()) { return; }
 
+    mDropdowns[index].enabled = enabled;
     if(enabled)
     {
         mDropdowns[index].rootLabel->SetFont(mDropdownFont);
@@ -201,4 +224,11 @@ void SidneyMenuBar::SetDropdownEnabled(size_t index, bool enabled)
         mDropdowns[index].rootLabel->SetFont(mDropdownDisabledFont);
         mDropdowns[index].rootArrow->SetTexture(mDropdownDisabledArrowTexture);
     }
+}
+
+void SidneyMenuBar::SetDropdownChoiceEnabled(size_t dropdownIndex, size_t choiceIndex, bool enabled)
+{
+    if(dropdownIndex >= mDropdowns.size()) { return; }
+    if(choiceIndex > mDropdowns[dropdownIndex].options.size()) { return; }
+    mDropdowns[dropdownIndex].options[choiceIndex]->GetButton()->SetCanInteract(enabled);
 }

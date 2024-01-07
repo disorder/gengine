@@ -1,63 +1,146 @@
 #include "SidneyAnalyze.h"
 
 #include "AssetManager.h"
-//#include "AudioManager.h"
-#include "InventoryManager.h"
+#include "Sidney.h"
 #include "SidneyButton.h"
 #include "SidneyFiles.h"
 #include "SidneyUtil.h"
-//#include "Texture.h"
 #include "UIButton.h"
+#include "UICanvas.h"
 #include "UINineSlice.h"
 #include "UIImage.h"
-//#include "UILabel.h"
 
-void SidneyAnalyze::Init(Actor* parent, SidneyFiles* sidneyFiles)
+void SidneyAnalyze::Init(Sidney* sidney, SidneyFiles* sidneyFiles)
 {
+    mSidney = sidney;
     mSidneyFiles = sidneyFiles;
 
     // Add background. This will also be the root for this screen.
-    mRoot = SidneyUtil::CreateBackground(parent);
+    mRoot = SidneyUtil::CreateBackground(mSidney);
     mRoot->SetName("Email");
 
     // Add main menu button.
-    SidneyUtil::CreateMainMenuButton(mRoot, [&](){
+    SidneyUtil::CreateMainMenuButton(mRoot, [this](){
         Hide();
     });
+
+    // Because the menu bar hangs down *in front of* analysis views, AND because the UI system doesn't yet have good ordering tools...
+    // ...we should create the anaysis views *first* so they appear *behind* the menu bar.
+    AnalyzeMap_Init();
+    AnalyzeImage_Init();
 
     // Add menu bar.
     mMenuBar.Init(mRoot, SidneyUtil::GetAnalyzeLocalizer().GetText("ScreenName"), 120.0f);
     mMenuBar.SetFirstDropdownPosition(24.0f);
     mMenuBar.SetDropdownSpacing(26.0f);
 
+    // "Open" dropdown.
     mMenuBar.AddDropdown(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu1Name"));
-    mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("MenuItem1"), [this](){
+    {
+        // "Open File" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("MenuItem1"), [this](){
 
-        // Show the file selector.
-        mSidneyFiles->Show([this](SidneyFile* selectedFile) {
-            mSidneyFiles->Hide();
+            // Show the file selector.
+            mSidneyFiles->Show([this](SidneyFile* selectedFile){
+                mAnalyzeFile = selectedFile;
 
-            mAnalyzeFile = selectedFile;
-
-            // Show pre-analyze UI.
-            mPreAnalyzeWindow->SetActive(true);
-            mPreAnalyzeTitleLabel->SetText(mAnalyzeFile->GetDisplayName());
-            mPreAnalyzeItemImage->SetTexture(mAnalyzeFile->GetIcon());
-
-            // Make the analyze button clickable.
-            mAnalyzeButton->GetButton()->SetCanInteract(true);
+                // If the file has never been analyzed before, we show the pre-analyze UI.
+                // Otherwise, we can go to the appropriate state directly.
+                if(!selectedFile->hasBeenAnalyzed)
+                {
+                    SetState(SidneyAnalyze::State::PreAnalyze);
+                }
+                else
+                {
+                    SetStateFromFile();
+                }
+            });
         });
-    });
+    }
 
+    // "Text" dropdown.
     mMenuBar.AddDropdown(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu2Name"));
+    {
+        // "Extract Anomalies" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu2Item1"), nullptr);
 
+        // "Translate" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu2Item2"), nullptr);
+
+        // "Anagram Parser" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu2Item3"), nullptr);
+
+        // "Analyze Text" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu2Item4"), nullptr);
+    }
+
+    // "Graphic" dropdown.
     mMenuBar.AddDropdown(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu3Name"));
+    {
+        // "View Geometry" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu3Item1"), [this](){
+            if(mAnalyzeFile != nullptr)
+            {
+                if(mAnalyzeFile->index == 20)
+                {
+                    printf("Added triangle\n");
+                    mSidneyFiles->AddFile(37); // Triangle
+                }
+                if(mAnalyzeFile->index == 21)
+                {
+                    printf("Added circle and square\n");
+                    mSidneyFiles->AddFile(38); // Circle
+                    mSidneyFiles->AddFile(39); // Square
+                }
+            }
+        });
 
+        // "Rotate Shape" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu3Item2"), nullptr);
+
+        // "Zoom & Clarify" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu3Item3"), nullptr);
+
+        //TODO: Add a divider/empty space here. (Menu3Item4)
+
+        // "Use Shape" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu3Item5"), [this](){
+            AnalyzeMap_OnUseShapePressed();
+        });
+
+        // (Note: "Save Shape" is Item6, but I don't think it is used in the final game?)
+
+        // "Erase Shape" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu3Item7"), [this](){
+            AnalyzeMap_OnEraseShapePressed();
+        });
+    }
+
+    // "Map" dropdown.
     mMenuBar.AddDropdown(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu4Name"));
-    
-    mMenuBar.SetDropdownEnabled(1, false);
-    mMenuBar.SetDropdownEnabled(2, false);
-    mMenuBar.SetDropdownEnabled(3, false);
+    {
+        // "Enter Points" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu4Item1"), [this](){
+            AnalyzeMap_OnEnterPointsPressed();
+        });
+
+        // "Clear Points" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu4Item2"), [this](){
+            AnalyzeMap_OnClearPointsPressed();
+        });
+
+        //TODO: Add a divider/empty space here. (Menu4Item3)
+
+        // "Draw Grid" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu4Item4"), [this](){
+            AnalyzeMap_OnDrawGridPressed();
+        });
+
+        // "Erase Grid" choice.
+        mMenuBar.AddDropdownChoice(SidneyUtil::GetAnalyzeLocalizer().GetText("Menu4Item5"), [this](){
+            AnalyzeMap_OnEraseGridPressed();
+        });
+    }
 
     // Add analyze button.
     {
@@ -74,15 +157,15 @@ void SidneyAnalyze::Init(Actor* parent, SidneyFiles* sidneyFiles)
 
         mAnalyzeButton = analyzeButton;
         mAnalyzeButton->SetPressCallback([this](){
-            AnalyzeFile();
+            OnAnalyzeButtonPressed();
         });
     }
 
     // Add pre-analyze window.
-    // Create box/window for main ID making area.
-    mPreAnalyzeWindow = new Actor(TransformType::RectTransform);
-    mPreAnalyzeWindow->GetTransform()->SetParent(mRoot->GetTransform());
     {
+        mPreAnalyzeWindow = new Actor(TransformType::RectTransform);
+        mPreAnalyzeWindow->GetTransform()->SetParent(mRoot->GetTransform());
+
         UINineSlice* border = mPreAnalyzeWindow->AddComponent<UINineSlice>(SidneyUtil::GetGrayBoxParams(SidneyUtil::TransBgColor));
         border->GetRectTransform()->SetSizeDelta(153.0f, 167.0f);
 
@@ -128,6 +211,69 @@ void SidneyAnalyze::Init(Actor* parent, SidneyFiles* sidneyFiles)
         mPreAnalyzeWindow->SetActive(false);
     }
 
+    // Analyze message box.
+    {
+        // Create root, which covers whole screen and acts as an input blocker while the message is up.
+        {
+            mAnalyzeMessageWindowRoot = new Actor(TransformType::RectTransform);
+            mAnalyzeMessageWindowRoot->GetTransform()->SetParent(mRoot->GetTransform());
+
+            RectTransform* inputBlockerRT = mAnalyzeMessageWindowRoot->GetComponent<RectTransform>();
+            inputBlockerRT->SetAnchor(AnchorPreset::CenterStretch);
+
+            mAnalyzeMessageWindowRoot->AddComponent<UIButton>();
+        }
+
+        // Add the window itself.
+        {
+            mAnalyzeMessageWindow = new Actor(TransformType::RectTransform);
+            mAnalyzeMessageWindow->GetTransform()->SetParent(mAnalyzeMessageWindowRoot->GetTransform());
+
+            UINineSlice* border = mAnalyzeMessageWindow->AddComponent<UINineSlice>(SidneyUtil::GetGrayBoxParams(Color32::Black));
+            border->GetRectTransform()->SetSizeDelta(250.0f, 157.0f);
+            border->GetRectTransform()->SetAnchor(AnchorPreset::Center);
+            border->GetRectTransform()->SetAnchoredPosition(0.0f, 0.0f);
+        }
+
+        // Add message label.
+        {
+            Actor* messageActor = new Actor(TransformType::RectTransform);
+            messageActor->GetTransform()->SetParent(mAnalyzeMessageWindow->GetTransform());
+
+            mAnalyzeMessage = messageActor->AddComponent<UILabel>();
+            mAnalyzeMessage->SetFont(gAssetManager.LoadFont("SID_TEXT_14.FON"));
+            mAnalyzeMessage->SetHorizonalAlignment(HorizontalAlignment::Center);
+            mAnalyzeMessage->SetHorizontalOverflow(HorizontalOverflow::Wrap);
+            mAnalyzeMessage->SetVerticalAlignment(VerticalAlignment::Top);
+
+            mAnalyzeMessage->GetRectTransform()->SetAnchor(AnchorPreset::CenterStretch);
+            mAnalyzeMessage->GetRectTransform()->SetAnchoredPosition(0.0f, 0.0f);
+            mAnalyzeMessage->GetRectTransform()->SetSizeDelta(-15.0f, -15.0f);
+        }
+
+        // Add OK button.
+        {
+            SidneyButton* okButton = new SidneyButton(mAnalyzeMessageWindow);
+            okButton->SetFont(gAssetManager.LoadFont("SID_TEXT_14.FON"));
+            okButton->SetText(SidneyUtil::GetAnalyzeLocalizer().GetText("OKButton"));
+            okButton->SetWidth(80.0f);
+
+            okButton->GetRectTransform()->SetAnchor(AnchorPreset::Bottom);
+            okButton->GetRectTransform()->SetAnchoredPosition(0.0f, 6.0f);
+
+            okButton->SetPressCallback([this](){
+                // Hide on button press.
+                mAnalyzeMessageWindowRoot->SetActive(false);
+            });
+        }
+
+        // Hide by default.
+        mAnalyzeMessageWindowRoot->SetActive(false);
+    }
+
+    // Start in empty state.
+    SetState(State::Empty);
+
     // Hide by default.
     Hide();
 }
@@ -144,12 +290,109 @@ void SidneyAnalyze::Hide()
 
 void SidneyAnalyze::OnUpdate(float deltaTime)
 {
+    // Only update this screen if it's active.
     if(!mRoot->IsActive()) { return; }
+
+    // Update menu bar.
     mMenuBar.Update();
+
+    // Update analyze sub-views.
+    AnalyzeMap_Update(deltaTime);
 }
 
-void SidneyAnalyze::AnalyzeFile()
+void SidneyAnalyze::SetState(State state)
 {
+    // Turn everything off for starters.
+    mPreAnalyzeWindow->SetActive(false);
+    mAnalyzeMapWindow->SetActive(false);
+    mAnalyzeImageWindow->SetActive(false);
+
+    // All dropdowns except "Open" are disabled by default.
+    mMenuBar.SetDropdownEnabled(kFileDropdownIdx, true);
+    mMenuBar.SetDropdownEnabled(kTextDropdownIdx, false);
+    mMenuBar.SetDropdownEnabled(kGraphicDropdownIdx, false);
+    mMenuBar.SetDropdownEnabled(kMapDropdownIdx, false);
+
+    // Save the state.
+    mState = state;
+
+    // Update UI based on current state.
+    switch(mState)
+    {
+    case State::Empty:
+        // Everything is already turned off, so nothing to do.
+        break;
+
+    case State::PreAnalyze:
+        // Show the pre-analyze UI with appropriate text/image for currently selected file.
+        mPreAnalyzeWindow->SetActive(true);
+        mPreAnalyzeTitleLabel->SetText(mAnalyzeFile->GetDisplayName());
+        mPreAnalyzeItemImage->SetTexture(mAnalyzeFile->GetIcon());
+        break;
+
+    case State::Map:
+        AnalyzeMap_EnterState();
+        break;
+
+    case State::Image:
+        AnalyzeImage_EnterState();
+        break;
+    }
+
+    // The analyze button is clickable as long as we aren't in the "Empty" state.
+    mAnalyzeButton->GetButton()->SetCanInteract(mState != State::Empty);
+}
+
+void SidneyAnalyze::SetStateFromFile()
+{
+    if(mAnalyzeFile == nullptr)
+    {
+        SetState(State::Empty);
+    }
+    else if(mAnalyzeFile->index == 19)
+    {
+        SetState(State::Map);
+    }
+    else if(mAnalyzeFile->type == SidneyFileType::Image)
+    {
+        SetState(State::Image);
+    }
+    else
+    {
+        printf("Unknown analyze state!\n");
+    }
+}
+
+void SidneyAnalyze::OnAnalyzeButtonPressed()
+{
+    // We need a file to analyze.
     if(mAnalyzeFile == nullptr) { return; }
-    printf("Analyze %s\n", mAnalyzeFile->GetDisplayName().c_str());
+
+    // Set to right state depending on the file we're analyzing.
+    SetStateFromFile();
+    
+    // Take the appropriate analyze action based on the item.
+    switch(mState)
+    {
+    default:
+    case State::Empty:
+    case State::PreAnalyze:
+        // Do nothing in these cases - Analyze button has no effect.
+        break;
+    case State::Map:
+        AnalyzeMap_OnAnalyzeButtonPressed();
+        break;
+    case State::Image:
+        AnalyzeImage_OnAnalyzeButtonPressed();
+        break;
+    }
+
+    // This file has definitely been analyzed at least once now!
+    mAnalyzeFile->hasBeenAnalyzed = true;
+}
+
+void SidneyAnalyze::ShowAnalyzeMessage(const std::string& message)
+{
+    mAnalyzeMessageWindowRoot->SetActive(true);
+    mAnalyzeMessage->SetText(SidneyUtil::GetAnalyzeLocalizer().GetText(message));
 }

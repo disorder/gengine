@@ -30,10 +30,16 @@ public:
     void AddDropdownChoice(const std::string& label, std::function<void()> pressCallback);
 
     void SetDropdownEnabled(size_t index, bool enabled);
+    void SetDropdownChoiceEnabled(size_t dropdownIndex, size_t choiceIndex, bool enabled);
+
+    void SetInteractive(bool interactive) { mInteractive = interactive; }
 
 private:
     // The root of the menu bar hierarchy.
     Actor* mRoot = nullptr;
+
+    // Is the user allowed to interact with the menu bar right now?
+    bool mInteractive = true;
 
     // For placing dropdowns: the next dropdown position, and the desired dropdown spacing.
     // Modifying these while adding dropdowns allows pretty flexible placement.
@@ -44,6 +50,8 @@ private:
     // Hovering an item shows the nested choices. Each choice can be clicked.
     struct Dropdown
     {
+        bool enabled = true;
+
         UIButton* rootButton = nullptr;
         UILabel* rootLabel = nullptr;
         UIImage* rootArrow = nullptr;
