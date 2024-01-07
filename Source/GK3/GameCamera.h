@@ -11,6 +11,7 @@
 
 #include <vector>
 
+class Camera;
 class GKObject;
 class Model;
 class OptionBar;
@@ -21,13 +22,20 @@ public:
     static void SetCameraGlideEnabled(bool enabled);
     static bool IsCameraGlideEnabled();
 
+    static void SetCinematicsEnabled(bool enabled);
+    static bool AreCinematicsEnabled();
+
     GameCamera();
 
     void AddBounds(Model* model) { mBoundsModels.push_back(model); }
+    void RemoveBounds(Model* model);
 	void SetBoundsEnabled(bool enabled) { mBoundsEnabled = enabled; }
 	
 	void SetAngle(const Vector2& angle);
 	void SetAngle(float yaw, float pitch);
+
+    void SetForcedCinematicMode(bool forced) { mForcedCinematicMode = forced; }
+    bool IsForcedCinematicMode() const { return mForcedCinematicMode; }
 
     void Glide(const Vector3& position, const Vector2& angle, std::function<void()> callback);
 
@@ -38,6 +46,9 @@ public:
 	Camera* GetCamera() { return mCamera; }
     
     void SetSceneActive(bool active) { mSceneActive = active; }
+    
+    void SaveFov();
+    void RestoreFov();
 	
 protected:
     void OnUpdate(float deltaTime) override;
@@ -55,6 +66,16 @@ private:
     // If true, scene is "active", so perform scene updates (e.g. camera movement).
     // When scene is not active, game camera still handles some user input stuff.
     bool mSceneActive = true;
+
+    // In forced cinematic mode, the camera has two special behaviors:
+    // 1) Even if cinematics are disabled, the camera will obey "cut to camera angle" sheep calls.
+    // 2) All movement or rotation of the camera is disabled.
+    bool mForcedCinematicMode = false;
+    
+    // Cutscenes sometimes set the camera FOV, but forget to set it back afterwards.
+    // To combat this, we remember the FOV pre-action and revert it afterwards.
+    // (After some testing, even the original game does this!)
+    float mSavedCameraFOV = 0.0f;
 
     //////////////////
     // MOVEMENT
@@ -136,6 +157,8 @@ private:
     Quaternion mInspectStartRot;
 	
     void SceneUpdate(float deltaTime);
+    void SceneUpdateMovement(float deltaTime);
+    void SceneUpdateInteract(float deltaTime);
 
     Vector3 ResolveCollisions(const Vector3& startPosition, const Vector3& moveOffset);
 };

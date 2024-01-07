@@ -4,8 +4,6 @@
 // Data and routines used to display a skybox around the world.
 //
 #pragma once
-#include <GL/glew.h>
-
 #include "Material.h"
 
 class Mesh;
@@ -14,6 +12,8 @@ class Texture;
 class Skybox
 {
 public:
+    ~Skybox();
+
     void Render();
     
 	void SetRightTexture(Texture* texture);
@@ -41,7 +41,8 @@ private:
     Mesh* mSkyboxMesh = nullptr;
     
     // An ID for the texture object generated in OpenGL.
-    GLuint mCubemapTextureId = GL_NONE;
+    //void* mCubemapHandle = nullptr;
+    unsigned int mCubemapHandle = 0;
 	
 	// Material used for rendering.
 	Material mMaterial;

@@ -1,6 +1,4 @@
 //
-// ReportManager.h
-//
 // Clark Kromenaker
 //
 // A manager for reporting information to "report streams". Each report stream
@@ -10,9 +8,9 @@
 //
 #pragma once
 #include <string>
-#include <unordered_map>
 
 #include "ReportStream.h"
+#include "StringUtil.h"
 
 class ReportManager
 {
@@ -42,9 +40,12 @@ public:
 	
 	// ShowReportGraph
 	// HideReportGraph
+
 private:
 	// All defined streams, keyed by stream name.
-	std::unordered_map<std::string, ReportStream> mStreams;
+	std::unordered_map_ci<std::string, ReportStream> mStreams;
 	
 	ReportStream& GetOrCreateStream(const std::string& streamName);
 };
+
+extern ReportManager gReportManager;

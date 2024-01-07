@@ -1,31 +1,29 @@
 #include "Texture.h"
 
-#include <SDL.h>
-
 #include "BinaryReader.h"
 #include "BinaryWriter.h"
-#include "GMath.h"
+#include "GAPI.h"
 #include "ThreadUtil.h"
 
 Texture Texture::White(2, 2, Color32::White);
 Texture Texture::Black(2, 2, Color32::Black);
 
-Texture::Texture(uint32 width, uint32 height) : Asset(""),
+Texture::Texture(uint32_t width, uint32_t height) : Asset(""),
     mWidth(width),
     mHeight(height)
 {
     // Create pixel array of desired size.
     int pixelsSize = mWidth * mHeight * 4;
-    mPixels = new uint8[pixelsSize];
+    mPixels = new uint8_t[pixelsSize];
 }
 
-Texture::Texture(uint32 width, uint32 height, Color32 color) : Asset(""),
+Texture::Texture(uint32_t width, uint32_t height, Color32 color) : Asset(""),
 	mWidth(width),
 	mHeight(height)
 {
 	// Create pixel array of desired size.
 	int pixelsSize = mWidth * mHeight * 4;
-	mPixels = new uint8[pixelsSize];
+	mPixels = new uint8_t[pixelsSize];
 	
 	// Flood-fill pixels with desired color.
 	for(int i = 0; i < pixelsSize; i += 4)
@@ -37,12 +35,6 @@ Texture::Texture(uint32 width, uint32 height, Color32 color) : Asset(""),
 	}
 }
 
-Texture::Texture(const std::string& name, char* data, uint32 dataLength) : Asset(name)
-{
-	BinaryReader reader(data, dataLength);
-    ParseFromData(reader);
-}
-
 Texture::Texture(BinaryReader& reader) : Asset("")
 {
     ParseFromData(reader);
@@ -50,11 +42,12 @@ Texture::Texture(BinaryReader& reader) : Asset("")
 
 Texture::~Texture()
 {
-	if(mTextureId != GL_NONE)
+	if(mTextureHandle != 0)//nullptr)
 	{
-        GLuint textureId = mTextureId;
-        ThreadUtil::RunOnMainThread([textureId]() {
-            glDeleteTextures(1, &textureId);
+        //void* texHandle = mTextureHandle;
+        unsigned int texHandle = mTextureHandle;
+        ThreadUtil::RunOnMainThread([texHandle]() {
+            GAPI::Get()->DestroyTexture(texHandle);
         });
 	}
 	if(mPalette != nullptr)
@@ -74,27 +67,19 @@ Texture::~Texture()
 	}
 }
 
-void Texture::Activate(int textureUnit)
+void Texture::Load(uint8_t* data, uint32_t dataLength)
 {
-    // Activate desired texture unit.
-    // Only do this if desired unit is not already active! Small performance gain.
-    static int activeTextureUnit = -1;
-    if(activeTextureUnit != textureUnit)
-    {
-        glActiveTexture(GL_TEXTURE0 + textureUnit);
-        activeTextureUnit = textureUnit;
-    }
+    BinaryReader reader(data, dataLength);
+    ParseFromData(reader);
+}
 
+void Texture::Activate(uint8_t textureUnit)
+{
     // Upload to GPU if dirty.
     UploadToGPU();
 
-    // Bind texture (again, if not already bound - small performance gain).
-    static GLuint activeTextureId[2];
-    if(activeTextureId[textureUnit] != mTextureId)
-    {
-        glBindTexture(GL_TEXTURE_2D, mTextureId);
-        activeTextureId[textureUnit] = mTextureId;
-    }
+    // Activate texture in desired texture unit.
+    GAPI::Get()->ActivateTexture(mTextureHandle, textureUnit);
 }
 
 /*static*/ void Texture::Deactivate()
@@ -126,8 +111,8 @@ void Texture::SetPixelColor32(int x, int y, const Color32& color)
     if(mPixels == nullptr) { return; }
 
     // Make sure the index is valid.
-    uint32 index = (y * mWidth + x) * 4;
-    if(index < 0 || index >= (mWidth * mHeight * 4)) { return; }
+    uint32_t index = (y * mWidth + x) * 4;
+    if(index >= (mWidth * mHeight * 4)) { return; }
 
     // Set it.
     mPixels[index] = color.GetR();
@@ -143,43 +128,43 @@ Color32 Texture::GetPixelColor32(int x, int y) const
 	if(mPixels == nullptr) { return Color32::Black; }
 	
 	// Calculate index into pixels array.
-	uint32 index = static_cast<uint32>((y * mWidth + x) * 4);
+	uint32_t index = static_cast<uint32_t>((y * mWidth + x) * 4);
 	
 	// If index isn't valid...also return black.
-	if(index < 0 || index >= (mWidth * mHeight * 4)) { return Color32::Black; }
+	if(index >= (mWidth * mHeight * 4)) { return Color32::Black; }
 	
-	uint8 r = mPixels[index];
-    uint8 g = mPixels[index + 1];
-    uint8 b = mPixels[index + 2];
-    uint8 a = mPixels[index + 3];
+	uint8_t r = mPixels[index];
+    uint8_t g = mPixels[index + 1];
+    uint8_t b = mPixels[index + 2];
+    uint8_t a = mPixels[index + 3];
 	return Color32(r, g, b, a);
 }
 
-void Texture::SetPaletteIndex(int x, int y, uint8 val)
+void Texture::SetPaletteIndex(int x, int y, uint8_t val)
 {
     // No palette indexes means we can't get a value!
     if(mPaletteIndexes == nullptr) { return; }
 
     // Calculate index into pixels array.
-    uint32 index = static_cast<uint32>(y * mWidth + x);
+    uint32_t index = static_cast<uint32_t>(y * mWidth + x);
 
     // If index isn't valid...also return zero.
-    if(index < 0 || index >= (mWidth * mHeight)) { return; }
+    if(index >= (mWidth * mHeight)) { return; }
 
     // Got it!
     mPaletteIndexes[index] = val;
 }
 
-uint8 Texture::GetPaletteIndex(int x, int y) const
+uint8_t Texture::GetPaletteIndex(int x, int y) const
 {
 	// No palette indexes means we can't get a value!
 	if(mPaletteIndexes == nullptr) { return 0; }
 	
 	// Calculate index into pixels array.
-	uint32 index = static_cast<uint32>(y * mWidth + x);
+	uint32_t index = static_cast<uint32_t>(y * mWidth + x);
 	
 	// If index isn't valid...also return zero.
-	if(index < 0 || index >= (mWidth * mHeight)) { return 0; }
+	if(index >= (mWidth * mHeight)) { return 0; }
 	
 	// Got it!
 	return mPaletteIndexes[index];
@@ -332,21 +317,11 @@ void Texture::UploadToGPU()
     // Nothing to do.
     if(mDirtyFlags == DirtyFlags::None) { return; }
 
-    // If this is a new texture, we must generate/bind texture object in OpenGL.
-    // We'll assume we also need to upload pixel data with any new texture.
-    if(mTextureId == GL_NONE)
+    // If no texture handle yet, we must create a new texture in the underlying graphics API.
+    if(mTextureHandle == 0)//nullptr)
     {
-        // Generate and bind the texture object in OpenGL.
-        glGenTextures(1, &mTextureId);
-        glBindTexture(GL_TEXTURE_2D, mTextureId);
-
-        // Load texture data into texture object.
-        // OpenGL assumes that pixel data is from bottom-left, BUT our pixels array is from top-left!
-        // You'd think this would lead to upside-down textures in-game...BUT GK3 uses DirectX style UVs (from top-left).
-        // So, this "double inversion" actually leads to textures displaying correctly in OpenGL.
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                     mWidth, mHeight, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, mPixels);
+        // Create a texture and set pixels.
+        mTextureHandle = GAPI::Get()->CreateTexture(mWidth, mHeight, mPixels);
 
         // We must upload properties when texture is first generated too.
         mDirtyFlags |= DirtyFlags::Properties;
@@ -354,19 +329,17 @@ void Texture::UploadToGPU()
     else
     {
         // Just bind the texture.
-        glBindTexture(GL_TEXTURE_2D, mTextureId);
+        GAPI::Get()->ActivateTexture(mTextureHandle);
 
         // If pixel data is dirty, upload new pixel data.
         if((mDirtyFlags & DirtyFlags::Pixels) != DirtyFlags::None)
         {
-            glTexSubImage2D(GL_TEXTURE_2D, 0,
-                            0, 0, mWidth, mHeight,
-                            GL_RGBA, GL_UNSIGNED_BYTE, mPixels);
+            GAPI::Get()->SetTexturePixels(mTextureHandle, mWidth, mHeight, mPixels);
 
             // If using mipmaps, we must regenerate mipmaps for this texture after changing its pixels.
             if(mMipmaps)
             {
-                glGenerateMipmap(GL_TEXTURE_2D);
+                GAPI::Get()->GenerateMipmaps(mTextureHandle);
             }
         }
     }
@@ -378,7 +351,7 @@ void Texture::UploadToGPU()
         // Note that if mipmaps have been disabled, we don't bother destroying the mipmaps - we just won't use them (see below).
         if(mMipmaps)
         {
-            glGenerateMipmap(GL_TEXTURE_2D);
+            GAPI::Get()->GenerateMipmaps(mTextureHandle);
         }
 
         // Since trilinear filtering depends on mipmaps, we need to modify texture properties if trilinear filtering is enabled.
@@ -392,29 +365,10 @@ void Texture::UploadToGPU()
     if((mDirtyFlags & DirtyFlags::Properties) != DirtyFlags::None)
     {
         // Set wrap mode for the texture.
-        GLfloat wrapParam = mWrapMode == WrapMode::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapParam);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapParam);
+        GAPI::Get()->SetTextureWrapMode(mTextureHandle, mWrapMode);
 
-        // Determine min/mag filters. These are a little complicated, based on desired filter mode and mipmaps.
-        // Defaults (GL_NEAREST) correlate to point filtering.
-        GLfloat minFilterParam = GL_NEAREST;
-        GLfloat magFilterParam = GL_NEAREST;
-        if(mFilterMode == FilterMode::Bilinear)
-        {
-            // Bilinear filtering uses GL_LINEAR. We can also use mipmaps with bilinear filtering.
-            minFilterParam = mMipmaps ? GL_LINEAR_MIPMAP_NEAREST : GL_LINEAR;
-            magFilterParam = GL_LINEAR;
-        }
-        else if(mFilterMode == FilterMode::Trilinear)
-        {
-            // Trilinear filtering technically requires mipmaps.
-            // If we don't have mipmaps, it is really just bilinear filtering!
-            minFilterParam = mMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR;
-            magFilterParam = GL_LINEAR;
-        }
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilterParam);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magFilterParam);
+        // Set filter mode for texture.
+        GAPI::Get()->SetTextureFilterMode(mTextureHandle, mFilterMode, mMipmaps);
     }
 
     // We did it all - clear the dirty flags.
@@ -484,19 +438,20 @@ void Texture::WriteToFile(const std::string& filePath)
     // PIXELS
 	// Write out one row at a time, bottom to top, left to right, per BMP format standard.
 	int rowSize = CalculateBmpRowSize(bitsPerPixel, mWidth);
-    for(int y = mHeight - 1; y >= 0; --y)
+    for(uint32_t y = mHeight; y > 0; --y)
     {
+        uint32_t height = y - 1;
 		int bytesWritten = 0;
-        for(int x = 0; x < mWidth; ++x)
+        for(uint32_t x = 0; x < mWidth; ++x)
         {
             if(bitsPerPixel == 8)
             {
-                writer.WriteByte(mPaletteIndexes[(y * mWidth + x)]);
+                writer.WriteByte(mPaletteIndexes[(height * mWidth + x)]);
                 ++bytesWritten;
             }
             else if(bitsPerPixel == 32)
             {
-                int index = (y * mWidth + x) * 4;
+                uint32_t index = (height * mWidth + x) * 4;
                 writer.WriteByte(mPixels[index + 2]); // Blue
                 writer.WriteByte(mPixels[index + 1]); // Green
                 writer.WriteByte(mPixels[index]); 	  // Red
@@ -562,9 +517,9 @@ void Texture::ParseFromCompressedFormat(BinaryReader& reader)
     
     // Read in pixel data.
     // This pixel data is stored top-left to bottom-right, so we don't flip (our pixel array starts at top-left corner).
-	for(int y = 0; y < mHeight; ++y)
+	for(uint32_t y = 0; y < mHeight; ++y)
 	{
-		for(int x = 0; x < mWidth; ++x)
+		for(uint32_t x = 0; x < mWidth; ++x)
 		{
 			int current = (y  * mWidth + x) * 4;
 			uint16_t pixel = reader.ReadUShort();
@@ -670,18 +625,18 @@ void Texture::ParseFromBmpFormat(BinaryReader& reader)
 		// The number of bytes is numColors in palette, times 4 bytes each.
 		// The order of the colors is blue, green, red, alpha.
         mPaletteSize = numColorsInColorPalette * 4;
-		mPalette = new uint8[mPaletteSize];
+		mPalette = new uint8_t[mPaletteSize];
 		reader.Read(mPalette, mPaletteSize);
 	}
 	
 	// PIXELS
 	// Allocate pixels array.
-	mPixels = new uint8[mWidth * mHeight * 4];
+	mPixels = new uint8_t[mWidth * mHeight * 4];
 	
 	// For 8-bpp or lower images with a palette, allocate palette indexes.
 	if(bitsPerPixel <= 8)
 	{
-		mPaletteIndexes = new uint8[mWidth * mHeight];
+		mPaletteIndexes = new uint8_t[mWidth * mHeight];
 	}
 	
 	// Read in pixel data.
@@ -690,7 +645,7 @@ void Texture::ParseFromBmpFormat(BinaryReader& reader)
 	for(int y = mHeight - 1; y >= 0; --y)
 	{
 		int bytesRead = 0;
-		for(uint32 x = 0; x < mWidth; ++x)
+		for(uint32_t x = 0; x < mWidth; ++x)
 		{
 			// Calculate index into pixels array.
             int index = (y * mWidth + x) * 4;
@@ -699,7 +654,7 @@ void Texture::ParseFromBmpFormat(BinaryReader& reader)
 			if(bitsPerPixel == 8)
 			{
 				// Read in the palette index and save it.
-				int paletteIndex = reader.ReadByte();
+				uint8_t paletteIndex = reader.ReadByte();
 				mPaletteIndexes[(y * mWidth + x)] = paletteIndex;
 				bytesRead++;
 				
@@ -733,7 +688,7 @@ void Texture::ParseFromBmpFormat(BinaryReader& reader)
 				bytesRead += 3;
 				
 				// BI_RGB format doesn't save any alpha, even if 32 bits per pixel.
-				// We'll use a placeholder of 255 (fullly opaque).
+				// We'll use a placeholder of 255 (fully opaque).
 				mPixels[index + 3] = 255; // Alpha
 			}
 			else

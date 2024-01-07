@@ -3,24 +3,26 @@
 #include <iostream>
 #include <fstream>
 
+#include "AudioManager.h"
 #include "BinaryReader.h"
-
-Audio::Audio(const std::string& name, char* data, int dataLength) : Asset(name),
-    mDataBuffer(data),
-    mDataBufferLength(dataLength)
-{
-    // Note that AssetManager typically deletes the data buffer after the asset is created.
-    // But for Audio, it knows to not do this - so it's OK for us to save the data pointer.
-    ParseFromData(data, dataLength);
-}
 
 Audio::~Audio()
 {
 	delete[] mDataBuffer;
+
+    // FMOD allocates memory internally when playing an Audio file. Let it know it can get free of that memory.
+    gAudioManager.ReleaseAudioData(this);
 }
 
-void Audio::ParseFromData(char* data, int dataLength)
+void Audio::Load(uint8_t* data, uint32_t dataLength)
 {
+    // Note that AssetManager typically deletes the data buffer after the asset is created.
+    // But for Audio, it knows to not do this - so it's OK for us to save the data pointer.
+    mDataBuffer = data;
+    mDataBufferLength = dataLength;
+
+    // The audio manager can read this data as-is (it's just WAV data).
+    // But parsing it can be helpful to retrieve some info, like duration, for later use.
     BinaryReader reader(data, dataLength);
     
     // First 4 bytes: chunk ID "RIFF".
@@ -52,14 +54,14 @@ void Audio::ParseFromData(char* data, int dataLength)
     }
     
     // 4 bytes: length of the subchunk data.
-    unsigned int chunkSize = reader.ReadUInt();
+    uint32_t chunkSize = reader.ReadUInt();
     
     // From here: "fact" chunk is formatChunkSize bytes ahead.
     // Or, for PCM, "data" chunk is formatChunkSize bytes ahead.
     // The next bit of data (format) indicates PCM vs other.
     
     // 2 bytes: the format used by the data.
-    unsigned short format = reader.ReadUShort();
+    uint16_t format = reader.ReadUShort();
     //mIsMusic = (format == kMp3Format);
     
     // 2 bytes: the number of channels (1 = mono, 2 = stereo, etc).
@@ -69,7 +71,7 @@ void Audio::ParseFromData(char* data, int dataLength)
     reader.ReadUInt();
     
     // 4 bytes: data rate ((sampleRate * bitsPerSample * channels) / 8).
-    unsigned int byteRate = reader.ReadUInt();
+    uint32_t byteRate = reader.ReadUInt();
     
     // 2 bytes: data block size in bytes (bitsPerSample * channels)
     // 2 bytes: bits per sample
@@ -108,8 +110,8 @@ void Audio::ParseFromData(char* data, int dataLength)
         return;
     }
     
-    unsigned int dataChunkSize = reader.ReadUInt();
+    uint32_t dataChunkSize = reader.ReadUInt();
     //std::cout << "Data chunk size is " << dataChunkSize << std::endl;
     
-    mDuration = dataChunkSize / byteRate;
+    mDuration = static_cast<float>(dataChunkSize) / static_cast<float>(byteRate);
 }

@@ -17,12 +17,11 @@
 
 class GameProgress
 {
-	TYPE_DECL_BASE();
 public:
-    GameProgress();
+    void Init();
 
     // Score Tracking
-	int GetMaxScore() const { return kMaxScore; }
+	int GetMaxScore() const { return mMaxScore; }
 	int GetScore() const { return mScore; }
 	void SetScore(int score);
 	void IncreaseScore(int points);
@@ -30,8 +29,12 @@ public:
 
     // Timeblock
 	const Timeblock& GetTimeblock() const { return mTimeblock; }
-	const Timeblock& GetLastTimeblock() const { return mLastTimeblock; }
-	void SetTimeblock(const Timeblock& timeblock);
+    void SetTimeblock(const Timeblock& timeblock);
+
+    void SetChangingTimeblock(bool changing) { mChangingTimeblock = changing; }
+    bool IsChangingTimeblock() const { return mChangingTimeblock; }
+
+    const Timeblock& GetLastTimeblock() const { return mLastTimeblock; }
     std::string GetTimeblockDisplayName() const;
 
     // Flags
@@ -68,7 +71,7 @@ public:
 	
 private:
 	// Score tracking.
-    const int kMaxScore = 965; //TODO: Should be loaded from GAME.CFG
+    int mMaxScore = 965;
 	int mScore = 0;
 
     // Maps a score change label (e.g. e_110a_r25_tape) to the number of points gained.
@@ -80,6 +83,9 @@ private:
 	// Current and last time blocks.
 	Timeblock mTimeblock;
 	Timeblock mLastTimeblock;
+
+    // If true, we are currently changing timeblocks.
+    bool mChangingTimeblock = false;
 	
 	// General-use true/false flags for game logic.
     FlagSet mGameFlags;
@@ -100,3 +106,4 @@ private:
 	std::string_map_ci<int> mGameVariables;
 };
 
+extern GameProgress gGameProgress;

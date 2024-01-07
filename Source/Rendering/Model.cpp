@@ -20,12 +20,20 @@
 #define DEBUG_SUBMESH_OUTPUT
 #endif
 
-Model::Model(const std::string& name, char* data, int dataLength) : Asset(name)
+Model::~Model()
+{
+    for(auto& mesh : mMeshes)
+    {
+        delete mesh;
+    }
+}
+
+void Model::Load(uint8_t* data, uint32_t dataLength)
 {
     ParseFromData(data, dataLength);
 }
 
-void Model::WriteToObjFile(std::string filePath)
+void Model::WriteToObjFile(const std::string& filePath)
 {
 	std::ofstream out(filePath, std::ios::out);
     if(!out.good())
@@ -132,7 +140,7 @@ void Model::WriteToObjFile(std::string filePath)
 	}
 }
 
-void Model::ParseFromData(char *data, int dataLength)
+void Model::ParseFromData(uint8_t* data, uint32_t dataLength)
 {
     #ifdef DEBUG_MODEL_OUTPUT
     std::cout << "MOD " << mName << std::endl;
@@ -147,7 +155,7 @@ void Model::ParseFromData(char *data, int dataLength)
         return;
     }
     
-    // 2 bytes: A major/minor version number. Next 2 unknown.
+    // 2 bytes: A major/minor version number.
     reader.ReadByte(); // minor
     reader.ReadByte(); // major
 
@@ -156,7 +164,7 @@ void Model::ParseFromData(char *data, int dataLength)
     //printf("%s unknown %u\n", mName.c_str(), unknown);
     
     // 4 bytes: Number of meshes in this model.
-    unsigned int numMeshes = reader.ReadUInt();
+    uint32_t numMeshes = reader.ReadUInt();
     #ifdef DEBUG_MODEL_OUTPUT
     std::cout << "  Mesh Count: " << numMeshes << std::endl;
     #endif
@@ -170,7 +178,7 @@ void Model::ParseFromData(char *data, int dataLength)
     // Could maybe be a floating-point value? 0x000C842 = 100.0f
     reader.ReadUInt();
 	
-	// Unknown
+	// 4 bytes: unknown
 	reader.Skip(4);
     
     // 24 bytes: mostly unknown - most files have had zeros here thus far.
@@ -205,7 +213,7 @@ void Model::ParseFromData(char *data, int dataLength)
 	}
 	
     // Now, we iterate over each mesh in the file.
-    for(int i = 0; i < numMeshes; i++)
+    for(uint32_t i = 0; i < numMeshes; i++)
     {
         #ifdef DEBUG_MESH_OUTPUT
         std::cout << "  Mesh " << i << std::endl;
@@ -247,7 +255,7 @@ void Model::ParseFromData(char *data, int dataLength)
         mMeshes.push_back(mesh);
         
         // 4 bytes: Number of submeshes in this mesh.
-        unsigned int numSubMeshes = reader.ReadUInt();
+        uint32_t numSubMeshes = reader.ReadUInt();
         
         // 24 bytes: min & max bounds for the mesh.
         Vector3 min = reader.ReadVector3();
@@ -263,7 +271,7 @@ void Model::ParseFromData(char *data, int dataLength)
         meshToLocalMatrix.Transpose();
         
         // Now, iterate over each submesh in this mesh.
-        for(int j = 0; j < numSubMeshes; j++)
+        for(uint32_t j = 0; j < numSubMeshes; j++)
         {
             #ifdef DEBUG_SUBMESH_OUTPUT
             std::cout << "    Submesh " << j << std::endl;
@@ -279,15 +287,20 @@ void Model::ParseFromData(char *data, int dataLength)
             }
             
             // 32 bytes: the name of the texture for this submesh.
-            std::string textureName = reader.ReadStringBuffer(32);
+            std::string textureName = reader.ReadString(32);
             #ifdef DEBUG_SUBMESH_OUTPUT
             std::cout << "      Texture name: " << textureName << std::endl;
             #endif
-            
-            // 4 bytes: unknown - often is (0x00FFFFFF), but not always.
-            // Have also seen: 0x03773BB3, 0xFF000000, 0x50261200
-            // Maybe a color value?
-            reader.ReadUInt();
+
+            // 4 bytes: a color/tint for this submesh (in 0xAABBGGRR format).
+            // Note: alpha value always seems to be 0x00 here - we actually want to us 0xFF or the object will be invisible!
+            // Note: unclear if there would ever be a semi-transparent object, or if the alpha can always be ignored.
+            uint32_t colorInt = reader.ReadUInt();
+            uint8_t r = colorInt & 0xFF;
+            uint8_t g = (colorInt >> 8)  & 0xFF;
+            uint8_t b = (colorInt >> 16) & 0xFF;
+            //uint8_t a = (colorInt >> 24) & 0xFF;
+            Color32 color(r, g, b, 255u);
 
             // 4 bytes: unknown - seems to usually be 1, sometimes 0.
             reader.ReadUInt();
@@ -312,7 +325,7 @@ void Model::ParseFromData(char *data, int dataLength)
             
             // 4 bytes: Number of LODK blocks in this submesh. Often 0.
             // My guess: this is for level-of-detail variants for the submesh?
-            unsigned int lodkCount = reader.ReadUInt();
+            uint32_t lodkCount = reader.ReadUInt();
             #ifdef DEBUG_SUBMESH_OUTPUT
             std::cout << "      LODK count: " << lodkCount << std::endl;
             #endif
@@ -402,10 +415,13 @@ void Model::ParseFromData(char *data, int dataLength)
             
             // Save texture name.
             submesh->SetTextureName(textureName);
+
+            // Save color.
+            submesh->SetColor(color);
             
             // Next comes LODK blocks for this mesh group.
             // Not totally sure what these are for, but maybe LOD groups?
-            for(int k = 0; k < lodkCount; k++)
+            for(uint32_t k = 0; k < lodkCount; k++)
             {
                 // Identifier should be "KDOL" for this block.
                 identifier = reader.ReadString(4);
@@ -416,25 +432,25 @@ void Model::ParseFromData(char *data, int dataLength)
                 }
                 
                 // First three values in LODK block are counts for how much data to read after.
-                int unknownCount1 = reader.ReadUInt();
-                int unknownCount2 = reader.ReadUInt();
-                int unknownCount3 = reader.ReadUInt();
+                uint32_t unknownCount1 = reader.ReadUInt();
+                uint32_t unknownCount2 = reader.ReadUInt();
+                uint32_t unknownCount3 = reader.ReadUInt();
                 //std::cout << k << ": " << unknownCount1 << ", " << unknownCount2 << ", " << unknownCount3 << std::endl;
                 
                 // Read in all values. Currently don't know what they are though.
-                for(int l = 0; l < unknownCount1; l++)
+                for(uint32_t l = 0; l < unknownCount1; l++)
                 {
                     reader.ReadUShort();
                     reader.ReadUShort();
                     reader.ReadUShort();
                     reader.ReadUShort();
                 }
-                for(int l = 0; l < unknownCount2; l++)
+                for(uint32_t l = 0; l < unknownCount2; l++)
                 {
                     reader.ReadUShort();
                     reader.ReadUShort();
                 }
-                for(int l = 0; l < unknownCount3; l++)
+                for(uint32_t l = 0; l < unknownCount3; l++)
                 {
                     reader.ReadUShort();
                 }

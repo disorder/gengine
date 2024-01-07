@@ -1,35 +1,35 @@
 #include "SheepAPI_Animation.h"
 
 #include "Animator.h"
-#include "GEngine.h"
-#include "Scene.h"
-#include "Services.h"
+#include "AssetManager.h"
+#include "ReportManager.h"
+#include "SceneManager.h"
 
 using namespace std;
 
 shpvoid StartAnimation(const std::string& animationName)
 {
-    Animation* animation = Services::GetAssets()->LoadAnimation(animationName);
+    Animation* animation = gAssetManager.LoadAnimation(animationName, AssetScope::Scene);
     if(animation == nullptr)
     {
-        Services::GetReports()->Log("Error", "gk3 animation '" + animationName + ".anm' not found.");
+        gReportManager.Log("Error", "gk3 animation '" + animationName + ".anm' not found.");
         return 0;
     }
     
-    GEngine::Instance()->GetScene()->GetAnimator()->Start(animation, AddWait());
+    gSceneManager.GetScene()->GetAnimator()->Start(animation, AddWait());
     return 0;
 }
 RegFunc1(StartAnimation, void, string, WAITABLE, REL_FUNC);
 
 shpvoid LoopAnimation(const std::string& animationName)
 {
-    Animation* animation = Services::GetAssets()->LoadAnimation(animationName);
+    Animation* animation = gAssetManager.LoadAnimation(animationName, AssetScope::Scene);
     if(animation != nullptr)
     {
         AnimParams params;
         params.animation = animation;
         params.loop = true;
-        GEngine::Instance()->GetScene()->GetAnimator()->Start(params);
+        gSceneManager.GetScene()->GetAnimator()->Start(params);
     }
     return 0;
 }
@@ -37,10 +37,10 @@ RegFunc1(LoopAnimation, void, string, IMMEDIATE, REL_FUNC);
 
 shpvoid StopAnimation(const std::string& animationName)
 {
-    Animation* animation = Services::GetAssets()->LoadAnimation(animationName);
+    Animation* animation = gAssetManager.LoadAnimation(animationName, AssetScope::Scene);
     if(animation != nullptr)
     {
-        GEngine::Instance()->GetScene()->GetAnimator()->Stop(animation);
+        gSceneManager.GetScene()->GetAnimator()->Stop(animation);
     }
     return 0;
 }
@@ -48,21 +48,21 @@ RegFunc1(StopAnimation, void, string, IMMEDIATE, REL_FUNC);
 
 shpvoid StopAllAnimations()
 {
-    GEngine::Instance()->GetScene()->GetAnimator()->StopAll();
+    gSceneManager.GetScene()->GetAnimator()->StopAll();
     return 0;
 }
 RegFunc0(StopAllAnimations, void, IMMEDIATE, DEV_FUNC);
 
 shpvoid StartMoveAnimation(const std::string& animationName)
 {
-    Animation* animation = Services::GetAssets()->LoadAnimation(animationName);
+    Animation* animation = gAssetManager.LoadAnimation(animationName, AssetScope::Scene);
     if(animation != nullptr)
     {
         AnimParams animParams;
         animParams.animation = animation;
         animParams.allowMove = true;
         animParams.finishCallback = AddWait();
-        GEngine::Instance()->GetScene()->GetAnimator()->Start(animParams);
+        gSceneManager.GetScene()->GetAnimator()->Start(animParams);
     }
     return 0;
 }
@@ -72,11 +72,11 @@ shpvoid StartMom(const std::string& momAnimationName)
 {
     // Mom animation assets have a language prefix (e.g. "E" for English).
     // So, let's add that here.
-    Animation* animation = Services::GetAssets()->LoadMomAnimation("E" + momAnimationName);
+    Animation* animation = gAssetManager.LoadMomAnimation("E" + momAnimationName, AssetScope::Scene);
     if(animation != nullptr)
     {
         //TODO: Any need to send flag that this is a MOM animation file? The formats/uses seem identical.
-        GEngine::Instance()->GetScene()->GetAnimator()->Start(animation, AddWait());
+        gSceneManager.GetScene()->GetAnimator()->Start(animation, AddWait());
     }
     return 0;
 }

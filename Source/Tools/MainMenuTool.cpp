@@ -3,15 +3,14 @@
 #include <imgui.h>
 
 #include "Debug.h"
-#include "GEngine.h"
-#include "Scene.h"
+#include "SceneManager.h"
 #include "SceneConstruction.h"
 #include "Tools.h"
 
 void MainMenuTool::Render()
 {
     // This menu won't be super valuable if the scene is null.
-    Scene* scene = GEngine::Instance()->GetScene();
+    Scene* scene = gSceneManager.GetScene();
     if(scene == nullptr) { return; }
 
     // Get construction object.
@@ -41,11 +40,28 @@ void MainMenuTool::Render()
             {
                 construction.SetShowCameraBounds(!construction.GetShowCameraBounds());
             }
+            if(ImGui::MenuItem("Regions/Triggers", nullptr, construction.GetShowRegions()))
+            {
+                construction.SetShowRegions(!construction.GetShowRegions());
+            }
             if(ImGui::MenuItem("Walker Bounds", nullptr, construction.GetShowWalkerBoundary()))
             {
                 construction.SetShowWalkerBoundary(!construction.GetShowWalkerBoundary());
             }
+            if(ImGui::MenuItem("Walker Paths", nullptr, Debug::GetFlag("ShowWalkerPaths")))
+            {
+                Debug::ToggleFlag("ShowWalkerPaths");
+            }
+            ImGui::EndMenu();
+        }
 
+        // WINDOW menu
+        if(ImGui::BeginMenu("Window"))
+        {
+            if(ImGui::MenuItem("Hierarchy", nullptr, hierarchyToolActive))
+            {
+                hierarchyToolActive = !hierarchyToolActive;
+            }
             ImGui::EndMenu();
         }
 

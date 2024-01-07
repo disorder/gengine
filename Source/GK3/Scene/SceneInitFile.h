@@ -73,6 +73,9 @@ struct SceneCamera
     
     // Camera's position.
     Vector3 position;
+
+    // Camera's FOV.
+    float fov = 60.0f;
 };
 
 struct RoomSceneCamera : public SceneCamera
@@ -182,8 +185,8 @@ struct SceneModel
     // Noun associated with this object, for interactivity.
     std::string noun;
     
-    // Usually, verbs are specified in the NVC file. But it is allowed to
-    // specify a verb here if only a single verb response is possible.
+    // Usually, verbs are specified in the NVC file.
+    // But it can be specified here if only a single verb is possible.
     std::string verb;
     
     // An animation played on init. Only first frame will be applied.
@@ -230,8 +233,10 @@ struct ConditionalBlock
 class SceneInitFile : public Asset
 {
 public:
-	SceneInitFile(const std::string& name, char* data, int dataLength);
+    SceneInitFile(const std::string& name, AssetScope scope) : Asset(name, scope) { }
 	~SceneInitFile();
+
+    void Load(uint8_t* data, uint32_t dataLength);
 	
 	const SceneActor* FindCurrentEgo() const;
 	GeneralBlock FindCurrentGeneralBlock() const;
@@ -290,5 +295,5 @@ private:
 	// This one's also pointers b/c NVCs are Assets.
     std::vector<ConditionalBlock<NVC*>> mActions;
 	
-	void ParseFromData(char* data, int dataLength);
+	void ParseFromData(uint8_t* data, uint32_t dataLength);
 };

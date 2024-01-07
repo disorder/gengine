@@ -8,8 +8,9 @@
 // E.g. a Main Menu, an Options Screen, a Popup, a Tooltip.
 //
 #pragma once
-#include <climits>
 #include "UIWidget.h"
+
+#include <climits>
 
 class UICanvas : public UIWidget
 {
@@ -44,3 +45,4 @@ private:
 	// All widgets on this canvas.
 	std::vector<UIWidget*> mWidgets;
 };
+

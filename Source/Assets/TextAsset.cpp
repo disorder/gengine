@@ -2,14 +2,13 @@
 
 #include <cstring>
 
-TextAsset::TextAsset(const std::string& name, char* data, int dataLength) : Asset(name),
-    mText(data),
-    mTextLength(dataLength)
-{
-
-}
-
 TextAsset::~TextAsset()
 {
     delete[] mText;
+}
+
+void TextAsset::Load(uint8_t* data, uint32_t dataLength)
+{
+    mText = data;
+    mTextLength = dataLength;
 }

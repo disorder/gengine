@@ -3,23 +3,24 @@
 #include <cassert>
 
 #include "Actor.h"
+#include "AssetManager.h"
 #include "Collisions.h"
 #include "Debug.h"
 #include "Model.h"
 #include "Ray.h"
-#include "Services.h"
+#include "Renderer.h"
 #include "Texture.h"
 
 TYPE_DEF_CHILD(Component, MeshRenderer);
 
 MeshRenderer::MeshRenderer(Actor* owner) : Component(owner)
 {
-    Services::GetRenderer()->AddMeshRenderer(this);
+    gRenderer.AddMeshRenderer(this);
 }
 
 MeshRenderer::~MeshRenderer()
 {
-    Services::GetRenderer()->RemoveMeshRenderer(this);
+    gRenderer.RemoveMeshRenderer(this);
 }
 
 void MeshRenderer::Render(bool opaque, bool translucent)
@@ -36,16 +37,15 @@ void MeshRenderer::Render(bool opaque, bool translucent)
     int maxMaterialIndex = static_cast<int>(mMaterials.size()) - 1;
     
     // Iterate meshes and render each in turn.
-    //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     Matrix4 localToWorldMatrix = GetOwner()->GetTransform()->GetLocalToWorldMatrix();
-    for(int i = 0; i < mMeshes.size(); i++)
+    for(size_t i = 0; i < mMeshes.size(); i++)
     {
         // Mesh vertices are in "mesh space". Create matrix to convert to world space.
         Matrix4 meshToWorldMatrix = localToWorldMatrix * mMeshes[i]->GetMeshToLocalMatrix();
         
         // Iterate each submesh.
-        auto submeshes = mMeshes[i]->GetSubmeshes();
-        for(int j = 0; j < submeshes.size(); j++)
+        const std::vector<Submesh*>& submeshes = mMeshes[i]->GetSubmeshes();
+        for(size_t j = 0; j < submeshes.size(); j++)
         {
             // Some meshes can have quite a few submeshes, but it seems wasteful to store visible bits for ALL of them.
             // So, we'll assume if some mesh has a ton of submeshes, that only the first 64 can be invisible. Everything >64 is always visible.
@@ -80,7 +80,7 @@ void MeshRenderer::Render(bool opaque, bool translucent)
                     for(int k = 0; k < vcount; ++k)
                     {
                         Matrix4 worldToMeshMatrix = Matrix4::Inverse(meshToWorldMatrix);
-                        Vector3 lightPos = worldToMeshMatrix.TransformPoint(GEngine::Instance()->GetScene()->GetSceneData()->GetGlobalLightPosition());
+                        Vector3 lightPos = worldToMeshMatrix.TransformPoint(gSceneManager.GetScene()->GetSceneData()->GetGlobalLightPosition());
                         Vector3 lightDir = Vector3::Normalize(lightPos - submeshes[j]->GetVertexPosition(k));
                         float dot = Vector3::Dot(submeshes[j]->GetVertexNormal(k), lightDir);
                         Color32 color(static_cast<int>(dot * 255), 0, 0);
@@ -102,7 +102,6 @@ void MeshRenderer::Render(bool opaque, bool translucent)
             ++submeshIndex;
         }
     }
-    //glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     
     // Optionally some AABB drawing.
     if(Debug::RenderAABBs())
@@ -113,17 +112,19 @@ void MeshRenderer::Render(bool opaque, bool translucent)
 
 void MeshRenderer::SetModel(Model* model)
 {
-    if(model == nullptr) { return; }
 	mModel = model;
     
     // Clear any existing.
     mMeshes.clear();
     mMaterials.clear();
-    
+
     // Add each mesh.
-    for(auto& mesh : model->GetMeshes())
+    if(model != nullptr)
     {
-        AddMesh(mesh);
+        for(auto& mesh : model->GetMeshes())
+        {
+            AddMesh(mesh);
+        }
     }
 }
 
@@ -141,6 +142,12 @@ void MeshRenderer::SetMesh(Mesh* mesh)
 
 void MeshRenderer::AddMesh(Mesh* mesh)
 {
+    // On rare occasions, GK3 meshes have no submeshes. No point in even considering these.
+    if(mesh == nullptr || mesh->GetSubmeshCount() == 0)
+    {
+        return;
+    }
+
 	// Add mesh to array.
 	mMeshes.push_back(mesh);
 	
@@ -154,9 +161,17 @@ void MeshRenderer::AddMesh(Mesh* mesh)
 		// Load and set texture reference.
 		if(!submesh->GetTextureName().empty())
 		{
-			Texture* tex = Services::GetAssets()->LoadSceneTexture(submesh->GetTextureName());
+            // The scope here would depend on whether this MeshRenderer is scene-specific or persists between scenes.
+			Texture* tex = gAssetManager.LoadSceneTexture(submesh->GetTextureName(), GetOwner()->IsDestroyOnLoad() ? AssetScope::Scene : AssetScope::Global);
 			m.SetDiffuseTexture(tex);
 		}
+        else
+        {
+            m.SetDiffuseTexture(&Texture::White);
+        }
+
+        // Set color.
+        m.SetColor(submesh->GetColor());
 		
 		// Add to materials list.
 		mMaterials.push_back(m);
@@ -209,9 +224,10 @@ Mesh* MeshRenderer::GetMesh(int index) const
 
 bool MeshRenderer::Raycast(const Ray& ray, RaycastHit& hitInfo)
 {
-	Matrix4 localToWorldMatrix = GetOwner()->GetTransform()->GetLocalToWorldMatrix();
-	
-	// Raycast against triangles in the mesh.
+    // Get our local to world matrix.
+    const Matrix4& localToWorldMatrix = GetOwner()->GetTransform()->GetLocalToWorldMatrix();
+
+	// Go through each mesh and see if the ray has hit the mesh.
 	for(auto& mesh : mMeshes)
 	{
 		// Calculate world->local space transform by creating object->local and inverting.
@@ -247,7 +263,7 @@ AABB MeshRenderer::GetAABB() const
 
     // Calculate AABB that contains all meshes in the mesh renderer.
     AABB toReturn;
-    for(int i = 0; i < mMeshes.size(); ++i)
+    for(size_t i = 0; i < mMeshes.size(); ++i)
     {
         Matrix4 meshToWorldMatrix = GetOwner()->GetTransform()->GetLocalToWorldMatrix() * mMeshes[i]->GetMeshToLocalMatrix();
 

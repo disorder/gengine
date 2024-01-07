@@ -1,50 +1,57 @@
 #include "Tools.h"
 
 #include <imgui.h>
-#include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl.h>
 
-#include "GEngine.h"
-#include "Scene.h"
-#include "Services.h"
+#include "GAPI.h"
+#include "InputManager.h"
+#include "SceneManager.h"
 #include "Window.h"
 
+#include "HierarchyTool.h"
 #include "MainMenuTool.h"
 
 namespace
 {
+    // Have tools been initialized?
+    bool toolsInitialized = false;
+    
     // Are tools active globally?
     bool toolsActive = false;
 
     // Individual tools.
     MainMenuTool mainMenu;
+    HierarchyTool hierarchy;
 }
 
 void Tools::Init()
 {
-    // Create IMGUI context.
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-
-    // Init for SDL & OpenGL.
-    ImGui_ImplSDL2_InitForOpenGL(Window::Get(), Services::GetRenderer()->GetGLContext());
-    ImGui_ImplOpenGL3_Init("#version 150");
-
-    // We'll use dark mode.
-    ImGui::StyleColorsDark();
+    if(!toolsInitialized)
+    {
+        // Create IMGUI context.
+        // We're assuming that the IMGUI graphics context is created by the rendering system.
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGui::StyleColorsDark();
+        toolsInitialized = true;
+    }
 }
 
 void Tools::Shutdown()
 {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
+    if(toolsInitialized)
+    {
+        // Destroy IMGUI context.
+        // We're assuming that the IMGUI graphics context was destroyed by the rendering system before this happens.
+        ImGui::DestroyContext();
+        toolsInitialized = false;
+    }
 }
 
 void Tools::Update()
 {
     // Toggle tools with Tab key.
-    if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_TAB))
+    if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_TAB))
     {
         toolsActive = !toolsActive;
     }
@@ -57,24 +64,27 @@ void Tools::Render()
     // Render construction mode.
     //TODO: This is *kind of* not the right spot for this, since tools render *after* debug drawing stuff.
     //TODO: So any Debug::Draw* calls will be on frame late. But maybe that's no big deal?
-    Scene* scene = GEngine::Instance()->GetScene();
+    Scene* scene = gSceneManager.GetScene();
     if(scene != nullptr)
     {
         scene->GetConstruction().Render();
     }
 
     // Start a new frame.
-    ImGui_ImplOpenGL3_NewFrame();
+    GAPI::Get()->ImGuiNewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
     // Render any tools.
     mainMenu.Render();
+    hierarchy.Render(mainMenu.hierarchyToolActive);
+
+    // Optionally show demo window.
     //ImGui::ShowDemoWindow();
 
     // Render with OpenGL.
     ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    GAPI::Get()->ImGuiRenderDrawData();
 }
 
 void Tools::SetActive(bool active)

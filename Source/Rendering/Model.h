@@ -21,13 +21,16 @@ class Mesh;
 class Model : public Asset
 {
 public:
-    Model(const std::string& name, char* data, int dataLength);
+    Model(const std::string& name, AssetScope scope) : Asset(name, scope) { }
+    ~Model();
+
+    void Load(uint8_t* data, uint32_t dataLength);
 
     const std::vector<Mesh*>& GetMeshes() const { return mMeshes; }
 	
 	bool IsBillboard() const { return mBillboard; }
 	
-	void WriteToObjFile(std::string filePath);
+	void WriteToObjFile(const std::string& filePath);
 	
 private:
     // A model consists of one or more meshes.
@@ -36,5 +39,5 @@ private:
 	// If true, the model should be rendered as a billboard.
 	bool mBillboard = false;
 	
-    void ParseFromData(char* data, int dataLength);
+    void ParseFromData(uint8_t* data, uint32_t dataLength);
 };

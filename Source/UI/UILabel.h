@@ -21,6 +21,7 @@ class UILabel : public UIWidget
 	TYPE_DECL_CHILD();
 public:
 	UILabel(Actor* owner);
+    ~UILabel();
 	
 	void Render() override;
 	
@@ -40,6 +41,9 @@ public:
 	const std::string& GetText() const { return mText; }
 
     void SetMasked(bool masked) { mMask = masked; }
+
+    int GetLineCount();
+    float GetTextWidth();
     
 protected:
 	Vector2 GetCharPos(int index) const;

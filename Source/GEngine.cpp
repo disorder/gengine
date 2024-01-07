@@ -1,13 +1,17 @@
 #include "GEngine.h"
 
+#include <cassert>
+
 #include <SDL.h>
 
 #include "ActionManager.h"
-#include "Actor.h"
+#include "AssetManager.h"
 #include "CharacterManager.h"
+#include "Clipboard.h"
+#include "Console.h"
 #include "ConsoleUI.h"
+#include "CursorManager.h"
 #include "Debug.h"
-#include "DialogueManager.h"
 #include "FileSystem.h"
 #include "FootstepManager.h"
 #include "GameProgress.h"
@@ -18,14 +22,16 @@
 #include "LocationManager.h"
 #include "Paths.h"
 #include "Profiler.h"
+#include "ReportManager.h"
+#include "Renderer.h"
 #include "SaveManager.h"
-#include "Scene.h"
-#include "Services.h"
+#include "SceneManager.h"
 #include "TextInput.h"
 #include "Timers.h"
 #include "ThreadPool.h"
 #include "Tools.h"
 #include "VerbManager.h"
+#include "VideoPlayer.h"
 #include "Window.h"
 
 GEngine* GEngine::sInstance = nullptr;
@@ -43,144 +49,122 @@ bool GEngine::Initialize()
     // Init threads.
     ThreadUtil::Init();
     ThreadPool::Init(4);
+	
+	// Tell console to log itself to the "Console" report stream.
+	gConsole.SetReportStream(&gReportManager.GetReportStream("Console"));
 
-	// Initialize reports.
-	Services::SetReports(&mReportManager);
-	
-	// Initialize console.
-	Services::SetConsole(&mConsole);
-	mConsole.SetReportStream(&mReportManager.GetReportStream("Console"));
-	
-    // Initialize asset manager.
-    Services::SetAssets(&mAssetManager);
+    // Init asset manager.
+    gAssetManager.Init();
+
+    // See if the demo barn is present. If so, we'll load the game in demo mode.
+    mDemoMode = gAssetManager.LoadBarn("Gk3demo.brn");
 
     // For simplicity right now, let's just load all barns at once.
-    std::vector<std::string> barns = {
-        "ambient.brn",
-        "common.brn",
-        "core.brn",
-        "day1.brn",
-        "day2.brn",
-        "day3.brn",
-        "day23.brn",
-        "day123.brn"
-    };
-    for(auto& barn : barns)
+    if(!mDemoMode)
     {
-        TIMER_SCOPED(barn.c_str());
-        if(!mAssetManager.LoadBarn(barn))
+        std::vector<std::string> barns = {
+            "ambient.brn",
+            "common.brn",
+            "core.brn",
+            "day1.brn",
+            "day2.brn",
+            "day3.brn",
+            "day23.brn",
+            "day123.brn"
+        };
+        for(auto& barn : barns)
         {
-            // Generate expected path for this asset.
-            std::string path = Paths::GetDataPath(Path::Combine({ "Data", barn }));
-            
-            // Generate error and show error box.
-            std::string error = StringUtil::Format("Could not load barn %s.\n\nMake sure Data directory is populated before running the game.", path.c_str());
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
-                                     "Gabriel Knight 3",
-                                     error.c_str(),
-                                     nullptr);
-            return false;
+            TIMER_SCOPED_VAR(barn.c_str(), barnTimer);
+            if(!gAssetManager.LoadBarn(barn))
+            {
+                // Generate expected path for this asset.
+                std::string path = Paths::GetDataPath(Path::Combine({ "Data", barn }));
+
+                // Generate error and show error box.
+                std::string error = StringUtil::Format("Could not load barn %s.\n\nMake sure Data directory is populated before running the game.", path.c_str());
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                                         "Gabriel Knight 3",
+                                         error.c_str(),
+                                         nullptr);
+                return false;
+            }
         }
     }
 
-    // Initialize input.
-    Services::SetInput(&mInputManager);
+    // Init tools.
+    // Must happen before renderer b/c IMGUI renderer init depends on IMGUI context being created.
+    Tools::Init();
 
-    // Initialize sheep manager.
-    Services::SetSheep(&mSheepManager);
-
-    // Create layer manager.
-    Services::Set<LayerManager>(&mLayerManager);
-
-    // Initialize renderer.
-    if(!mRenderer.Initialize())
+    // Initialize renderer. Depends on AssetManager being initialized.
+    // After this function executes, the game window will be visible.
+    if(!gRenderer.Initialize())
     {
         return false;
     }
-    Services::SetRenderer(&mRenderer);
-
-    // Init tools.
-    Tools::Init();
     
     // Initialize audio.
-    if(!mAudioManager.Initialize())
+    if(!gAudioManager.Initialize())
     {
         return false;
     }
-    Services::SetAudio(&mAudioManager);
+
+    // Init input system.
+    gInputManager.Init();
     
     // Load cursors and use the default one to start.
     // Must happen after barn assets are loaded.
-    Services::Set<CursorManager>(&mCursorManager);
-    mCursorManager.Init();
-    mCursorManager.UseLoadCursor();
+    gCursorManager.Init();
+    gCursorManager.UseLoadCursor();
     
     // Create localizer.
-    Services::Set<Localizer>(new Localizer("STRINGS.TXT"));
+    gLocalizer.Load("STRINGS.TXT");
     
-	// Load verb manager.
-	Services::Set<VerbManager>(new VerbManager());
+	// Init verb manager.
+    gVerbManager.Init();
 	
 	// Load character configs.
-	Services::Set<CharacterManager>(new CharacterManager());
+    gCharacterManager.Init();
 	
 	// Load floor configs.
-	Services::Set<FootstepManager>(new FootstepManager());
+    gFootstepManager.Init();
+
+    // Init game progress.
+    gGameProgress.Init();
 	
-	// Create game progress.
-	Services::Set<GameProgress>(new GameProgress());
-	
-	// Create inventory manager.
-	Services::Set<InventoryManager>(new InventoryManager());
-	
-	// Create locations manager.
-	Services::Set<LocationManager>(new LocationManager());
+	// Init inventory manager.
+    gInventoryManager.Init();
+
+    // Init location manager.
+    gLocationManager.Init();
 	
 	// Create action manager.
-	Services::Set<ActionManager>(&mActionManager);
-	mActionManager.Init();
-	
-	// Create dialogue manager.
-	Services::Set<DialogueManager>(new DialogueManager());
+    gActionManager.Init();
 	
     // Create video player.
-    Services::Set<VideoPlayer>(&mVideoPlayer);
-    mVideoPlayer.Initialize();
+    gVideoPlayer.Initialize();
     
 	// Create console UI - this persists for the entire game.
 	ConsoleUI* consoleUI = new ConsoleUI(false);
 	consoleUI->SetIsDestroyOnLoad(false);
 
+    // INIT DONE! Move on to starting the game flow.
     // Non-debug: do the full game presentation - company logos, intro movie, title screen.
     //#define FORCE_TITLE_SCREEN
     #if defined(NDEBUG) || defined(FORCE_TITLE_SCREEN)
-    //HACK/TODO: Ideally, we'd like to either make initial loading much shorter, OR play videos while initial loading is happening.
-    //HACK/TODO: However, my multithreading approach is clearly super incorrect and hacky, so that introduces race conditions between the renderer and game logic.
-    //HACK/TODO: For now, we'll just do loading before moving on to movies, but this is something to look at more closely.
-    Loader::DoAfterLoading([this](){
-
-        // Play opening movie.
-        mVideoPlayer.Play("Sierra.avi", true, true, [this](){
-
-            // On first launch of game, show the intro movie before the title screen.
-            // Otherwise, go straight to the title screen.
-            if(gSaveManager.GetRunCount() <= 1)
-            {
-                mVideoPlayer.Play("intro.bik", true, true, [this](){
-                    gGK3UI.ShowTitleScreen();
-                });
-            }
-            else
-            {
-                gGK3UI.ShowTitleScreen();
-            }
-        });
-    });
+    // In demo mode, wait for async stuff to load and then show the title screen.
+    if(mDemoMode)
+    {
+        ShowTitleScreen();
+    }
+    else // not demo
+    {
+        ShowOpeningMovies();
+    }
     #else
     // For dev purposes: just load right into a desired timeblock and location.
-    Loader::DoAfterLoading([this]() {
-        Services::Get<GameProgress>()->SetTimeblock(Timeblock("110A"));
-        LoadScene("R25");
+    Loader::DoAfterLoading([]() {
+        gGameProgress.SetTimeblock(Timeblock("110A"));
+        gSceneManager.LoadScene("R25");
     });
     #endif
 
@@ -210,19 +194,23 @@ void GEngine::Shutdown()
     ThreadPool::Shutdown();
     Loader::Shutdown();
 
-	// Delete all actors.
-	for(auto& actor : mActors)
-	{
-		delete actor;
-	}
-	mActors.clear();
+    // Shutdown scene manager (unloads scene and deletes all actors).
+    gSceneManager.Shutdown();
+    
+    // Even though asset manager is initialized first...
+    // We want to shut it down earlier b/c its assets may need to destroy data in the rendering/audio systems.
+    gAssetManager.Shutdown();
+
+    // Shutdown renderer.
+    gRenderer.Shutdown();
 
     // Shutdown tools.
     Tools::Shutdown();
 
-    // Shutdown any subsystems.
-    mRenderer.Shutdown();
-    mAudioManager.Shutdown();
+    // Shutdown audio system.
+    gAudioManager.Shutdown();
+
+    // Shutdown SDL.
     SDL_Quit();
 }
 
@@ -242,7 +230,7 @@ void GEngine::Run()
         GenerateOutputs();
 		
 		// Check whether we need a scene change.
-		LoadSceneInternal();
+        gSceneManager.UpdateLoading();
 
         // OK, this frame is done!
         ++mFrameNumber;
@@ -260,19 +248,56 @@ void GEngine::ForceUpdate()
     Update(10.0f);
 }
 
-void GEngine::LoadScene(const std::string& name, std::function<void()> callback)
+void GEngine::StartGame() const
 {
-    mSceneToLoad = name;
-    mSceneLoadedCallback = callback;
+    if(mDemoMode)
+    {
+        // Demo mode - load to Day 2, 12P at CSE.
+        Timeblock timeblock("212P");
+        gGameProgress.SetTimeblock(timeblock);
+
+        gGK3UI.ShowTimeblockScreen(timeblock, 5.0f, [](){
+            gSceneManager.LoadScene("CSE");
+        });
+    }
+    else
+    {
+        // Not demo mode - load to Day 1, 10AM in R25.
+        Timeblock timeblock("110A");
+        gGameProgress.SetTimeblock(timeblock);
+
+        gGK3UI.ShowTimeblockScreen(timeblock, 5.0f, [](){
+            gSceneManager.LoadScene("R25");
+        });
+    }
 }
 
-void GEngine::StartGame()
+void GEngine::ShowOpeningMovies()
 {
-    Timeblock timeblock("110A");
-    Services::Get<GameProgress>()->SetTimeblock(timeblock);
+    // Play opening movie.
+    gVideoPlayer.Play("Sierra.avi", true, true, [this](){
 
-    gGK3UI.ShowTimeblockScreen(timeblock, 5.0f, [this](){
-        LoadScene("R25");
+        // On first launch of game, show the intro movie before the title screen.
+        // Otherwise, go straight to the title screen.
+        if(gSaveManager.GetRunCount() <= 1)
+        {
+            gVideoPlayer.Play("intro.bik", true, true, [this](){
+                ShowTitleScreen();
+            });
+        }
+        else
+        {
+            ShowTitleScreen();
+        }
+    });
+}
+
+void GEngine::ShowTitleScreen()
+{
+    // Make sure all background loading completes before showing title screen.
+    // (not 100% technically necessary, this is just a good "airlock" to ensure all stuff is loaded)
+    Loader::DoAfterLoading([](){
+        gGK3UI.ShowTitleScreen();
     });
 }
 
@@ -282,7 +307,7 @@ void GEngine::ProcessInput()
 
     // Update the input manager.
     // Retrieve input device states for us to use.
-    mInputManager.Update();
+    gInputManager.Update();
     
     // We'll poll for events here. Catch the quit event.
     SDL_Event event;
@@ -301,7 +326,7 @@ void GEngine::ProcessInput()
                 // When a text input is active, controls for manipulating text and cursor pos.
 				if(event.key.keysym.sym == SDLK_BACKSPACE)
 				{
-					TextInput* textInput = mInputManager.GetTextInput();
+					TextInput* textInput = gInputManager.GetTextInput();
 					if(textInput != nullptr)
 					{
 						textInput->DeletePrev();
@@ -309,7 +334,7 @@ void GEngine::ProcessInput()
 				}
 				else if(event.key.keysym.sym == SDLK_DELETE)
 				{
-					TextInput* textInput = mInputManager.GetTextInput();
+					TextInput* textInput = gInputManager.GetTextInput();
 					if(textInput != nullptr)
 					{
 						textInput->DeleteNext();
@@ -317,7 +342,7 @@ void GEngine::ProcessInput()
 				}
 				else if(event.key.keysym.sym == SDLK_LEFT)
 				{
-					TextInput* textInput = mInputManager.GetTextInput();
+					TextInput* textInput = gInputManager.GetTextInput();
 					if(textInput != nullptr)
 					{
 						textInput->MoveCursorBack();
@@ -325,7 +350,7 @@ void GEngine::ProcessInput()
 				}
 				else if(event.key.keysym.sym == SDLK_RIGHT)
 				{
-					TextInput* textInput = mInputManager.GetTextInput();
+					TextInput* textInput = gInputManager.GetTextInput();
 					if(textInput != nullptr)
 					{
 						textInput->MoveCursorForward();
@@ -333,7 +358,7 @@ void GEngine::ProcessInput()
 				}
 				else if(event.key.keysym.sym == SDLK_HOME)
 				{
-					TextInput* textInput = mInputManager.GetTextInput();
+					TextInput* textInput = gInputManager.GetTextInput();
 					if(textInput != nullptr)
 					{
 						textInput->MoveCursorToStart();
@@ -341,15 +366,56 @@ void GEngine::ProcessInput()
 				}
 				else if(event.key.keysym.sym == SDLK_END)
 				{
-					TextInput* textInput = mInputManager.GetTextInput();
+					TextInput* textInput = gInputManager.GetTextInput();
 					if(textInput != nullptr)
 					{
 						textInput->MoveCursorToEnd();
 					}
 				}
 
+                // Ctrl + C: Copy text from text input.
+                // Ctrl + X: Cut text from text input.
+                // Ctrl + V: Past text from text input.
+				else if(event.key.keysym.sym == SDLK_c)
+                {
+                    SDL_Keymod modState = SDL_GetModState();
+                    if((modState & KMOD_CTRL) != 0)
+                    {
+                        TextInput* textInput = gInputManager.GetTextInput();
+                        if(textInput != nullptr)
+                        {
+                            Clipboard::SetClipboardText(textInput->GetText().c_str());
+                        }
+                    }
+                }
+				else if(event.key.keysym.sym == SDLK_x)
+                {
+                    SDL_Keymod modState = SDL_GetModState();
+                    if((modState & KMOD_CTRL) != 0)
+                    {
+                        TextInput* textInput = gInputManager.GetTextInput();
+                        if(textInput != nullptr)
+                        {
+                            Clipboard::SetClipboardText(textInput->GetText().c_str());
+                            textInput->SetText("");
+                        }
+                    }
+                }
+				else if(event.key.keysym.sym == SDLK_v)
+                {
+                    SDL_Keymod modState = SDL_GetModState();
+                    if((modState & KMOD_CTRL) != 0)
+                    {
+                        TextInput* textInput = gInputManager.GetTextInput();
+                        if(textInput != nullptr)
+                        {
+                            textInput->Insert(Clipboard::GetClipboardText());
+                        }
+                    }
+                }
+
                 // Alt + Enter: toggle fullscreen mode
-                else if(event.key.keysym.sym == SDLK_RETURN)
+				else if(event.key.keysym.sym == SDLK_RETURN)
                 {
                     SDL_Keymod modState = SDL_GetModState();
                     if((modState & KMOD_ALT) != 0)
@@ -365,8 +431,7 @@ void GEngine::ProcessInput()
                 // Ignore if tool overlay is eating keyboard inputs.
                 if(Tools::EatingKeyboardInputs()) { break; }
 
-				//TODO: Make sure not copy or pasting.
-				TextInput* textInput = mInputManager.GetTextInput();
+				TextInput* textInput = gInputManager.GetTextInput();
 				if(textInput != nullptr)
 				{
 					textInput->Insert(event.text.text);
@@ -376,7 +441,8 @@ void GEngine::ProcessInput()
 
             case SDL_MOUSEWHEEL:
             {
-                mInputManager.OnMouseWheelScroll(Vector2(event.wheel.x, event.wheel.y));
+                gInputManager.OnMouseWheelScroll(Vector2(static_cast<float>(event.wheel.x),
+                                                         static_cast<float>(event.wheel.y)));
                 break;
             }
 
@@ -399,7 +465,7 @@ void GEngine::ProcessInput()
     }
     
     // Quick quit for dev purposes.
-    if(mInputManager.IsKeyPressed(SDL_SCANCODE_F4))
+    if(gInputManager.IsKeyPressed(SDL_SCANCODE_F4))
     {
         Quit();
     }
@@ -413,26 +479,37 @@ void GEngine::Update()
     static DeltaTimer deltaTimer;
     float deltaTime = deltaTimer.GetDeltaTime();
 
-    // For debugging: press F5 to slow down passage of time significantly.
-    if(mInputManager.IsKeyPressed(SDL_SCANCODE_F5))
+    // In debug, calculate a running average FPS and display it in the window's title bar.
+    #if defined(DEBUG)
     {
-        deltaTime *= 0.25f;
+        // Current FPS is inverse of delta time.
+        float currentFps = 1.0f / deltaTime;
+
+        // We can utilize a moving average calculation. (https://en.wikipedia.org/wiki/Moving_average#Cumulative_average)
+        // "cumulative average equals previous cumulative average, times n, plus new data, all divided by n+1"
+        // (in our case, n = frame number counter)
+        static float averageFps = 0.0f;
+        averageFps = ((averageFps * static_cast<float>(mFrameNumber)) + currentFps) / static_cast<float>(mFrameNumber + 1);
+
+        // Set title to show updated value.
+        Window::SetTitle(StringUtil::Format("Gabriel Knight 3 (%.2f FPS)", averageFps).c_str());
     }
+    #endif
 
     if(!Loader::IsLoading())
     {
         // Update game logic.
-        Update(deltaTime);
+        Update(deltaTime * mTimeMultiplier);
     }
 
     // Also update audio system (before or after game logic?)
-    mAudioManager.Update(deltaTime);
+    gAudioManager.Update(deltaTime);
     
     // Update video playback.
-    mVideoPlayer.Update();
+    gVideoPlayer.Update();
 
     // Update cursors.
-    mCursorManager.Update(deltaTime);
+    gCursorManager.Update(deltaTime);
 	
 	// Update debug visualizations.
 	Debug::Update(deltaTime);
@@ -446,22 +523,12 @@ void GEngine::Update()
 
 void GEngine::Update(float deltaTime)
 {
-    // Update the scene (kind of temp - just for convenience).
-    // (or maybe actors should belong to a scene??? hmmmm)
-    if(mScene != nullptr)
-    {
-        mScene->Update(deltaTime);
-    }
+    // Update the scene.
+    gSceneManager.Update(deltaTime);
 
-    // Update all actors.
-    for(size_t i = 0; i < mActors.size(); i++)
-    {
-        mActors[i]->Update(deltaTime);
-    }
-
-    // Delete any destroyed actors.
-    DeleteDestroyedActors();
-
+    // Update location system.
+    gLocationManager.Update();
+    
     // Update timers.
     Timers::Update(deltaTime);
 }
@@ -469,107 +536,18 @@ void GEngine::Update(float deltaTime)
 void GEngine::GenerateOutputs()
 {
     PROFILER_SCOPED(GenerateOutputs);
-    if(!Loader::IsLoading())
-    {
-        // Clear screen.
-        mRenderer.Clear();
 
-        // Render the game scene.
-        mRenderer.Render();
+    if(gSceneManager.IsSceneLoading()) { return; }
 
-        // Render any tools over the game scene.
-        Tools::Render();
+    // Clear screen.
+    gRenderer.Clear();
 
-        // Present the final result to screen.
-        mRenderer.Present();
-    }
-}
+    // Render the game scene.
+    gRenderer.Render();
 
-void GEngine::LoadSceneInternal()
-{
-    // Obviously no need to do anything if no load scene is defined.
-	if(mSceneToLoad.empty() && !mUnloadScene) { return; }
+    // Render any tools over the game scene.
+    Tools::Render();
 
-    // If background thread is performing loading, wait until that's done.
-    // If the loader is loading the scene, we don't want to "double load" or something.
-    if(Loader::IsLoading()) { return; }
-
-    // Delete the current scene, if any.
-    UnloadSceneInternal();
-    mUnloadScene = false; // we did it
-
-    // It's possible we just wanted to unload the current scene without loading a new scene.
-    // So, early out in that case.
-    if(mSceneToLoad.empty()) { return; }
-    
-    // Initiate scene load on background thread.
-    Loader::Load([this]() {
-        TIMER_SCOPED("GEngine::LoadSceneInternal::Load");
-        // Create the new scene.
-        //TODO: Scene constructor should probably ONLY take a scene name.
-        //TODO: Internally, we can call to GameProgress or whatnot as needed, but that's very GK3-specific stuff.
-        mScene = new Scene(mSceneToLoad, Services::Get<GameProgress>()->GetTimeblock());
-
-        // Load the scene - this is separate from constructor
-        // b/c load operations may need to reference the scene itself!
-        mScene->Load();
-
-        // Clear scene load request.
-        mSceneToLoad.clear();
-    });
-
-    // Once loading is done, init scene and away we go.
-    Loader::DoAfterLoading([this](){
-        mScene->Init();
-
-        // Execute scene load callback, if any.
-        if(mSceneLoadedCallback != nullptr)
-        {
-            mSceneLoadedCallback();
-            mSceneLoadedCallback = nullptr;
-        }
-    });
-}
-
-void GEngine::UnloadSceneInternal()
-{
-    if(mScene != nullptr)
-    {
-        mScene->Unload();
-        delete mScene;
-        mScene = nullptr;
-    }
-
-    // Destroy any actors that are destroy on load.
-    for(auto& actor : mActors)
-    {
-        if(actor->IsDestroyOnLoad())
-        {
-            actor->Destroy();
-        }
-    }
-
-    // After destroy pass, delete destroyed actors.
-    DeleteDestroyedActors();
-}
-
-void GEngine::DeleteDestroyedActors()
-{
-	//TODO: Maybe switch to a "swap to end then delete" strategy.
-	
-	// Use iterator so we can carefully erase and delete actors without too many headaches.
-	auto it = mActors.begin();
-	while(it != mActors.end())
-	{
-		if((*it)->IsDestroyed())
-		{
-			Actor* actor = (*it);
-			it = mActors.erase(it);
-			delete actor;
-		}
-		else
-		{
-			++it;
-		}
-	}
+    // Present the final result to screen.
+    gRenderer.Present();
 }

@@ -16,16 +16,17 @@ UILabel::UILabel(Actor* owner) : UIWidget(owner)
 	
 }
 
+UILabel::~UILabel()
+{
+    delete mMesh;
+}
+
 void UILabel::Render()
 {
 	if(!IsActiveAndEnabled()) { return; }
 	
 	// Generate the mesh, if needed.
-	if(mMesh == nullptr || mNeedMeshRegen)
-	{
-		GenerateMesh();
-		mNeedMeshRegen = false;
-	}
+    GenerateMesh();
 	
 	// If mesh is still null for some reason, we can't render.
 	if(mMesh == nullptr) { return; }
@@ -79,6 +80,48 @@ void UILabel::SetText(const std::string& text)
 	}
 }
 
+int UILabel::GetLineCount()
+{
+    // Before the line count can be known, an up-to-date mesh is needed.
+    // This causes the text layout to be calculated.
+    GenerateMesh();
+
+    // Return line count from text layout.
+    return mTextLayout.GetLineCount();
+}
+
+float UILabel::GetTextWidth()
+{
+    // Before the text width can be known, an up-to-date mesh is needed.
+    GenerateMesh();
+
+    // Used generated mesh to find min/max x-positions of the glyphs.
+    float smallestX = FLT_MAX;
+    float largestX = FLT_MIN;
+    for(auto& charInfo : mTextLayout.GetChars())
+    {
+        float minX = charInfo.pos.x;
+        if(minX < smallestX)
+        {
+            smallestX = minX;
+        }
+
+        float maxX = charInfo.pos.x + charInfo.glyph.width;
+        if(maxX > largestX)
+        {
+            largestX = maxX;
+        }
+    }
+
+    //HACK: Generating the mesh above makes the label no longer "dirty".
+    //HACK: However, it may be important for UI creation code to keep the label dirty after calling this (if changing transform properties).
+    //HACK: The REAL problem is that changing a label's transform doesn't flag it as dirty, which might be good to fix!
+    SetDirty();
+
+    // The width is then the difference between the min/max x-positions.
+    return Math::Abs(largestX - smallestX);
+}
+
 Vector2 UILabel::GetCharPos(int index) const
 {
 	const TextLayout::CharInfo* charInfo = mTextLayout.GetChar(index);
@@ -97,9 +140,15 @@ void UILabel::PopulateTextLayout(TextLayout& textLayout)
 
 void UILabel::GenerateMesh()
 {
+    // Don't need to generate mesh if we have one and not dirty.
+    if(mMesh != nullptr && !mNeedMeshRegen)
+    {
+        return;
+    }
+
 	// Need font to generate mesh.
 	if(mFont == nullptr) { return; }
-	
+
 	// If a previous mesh exists, get rid of it.
 	if(mMesh != nullptr)
 	{
@@ -259,4 +308,7 @@ void UILabel::GenerateMesh()
 	// Vtx 1,2,3 is one triangle. Vtx 2,3,4 is the next triangle.
     Submesh* submesh = mMesh->AddSubmesh(meshDefinition);
 	submesh->SetRenderMode(RenderMode::Triangles);
+
+    // Mesh has been generated.
+    mNeedMeshRegen = false;
 }

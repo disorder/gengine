@@ -18,23 +18,39 @@ namespace StringUtil
 {
     inline void ToUpper(std::string& str)
     {
-        std::transform(str.begin(), str.end(), str.begin(), ::toupper);
+        for(size_t i = 0; i < str.size(); ++i)
+        {
+            str[i] = static_cast<char>(std::toupper(str[i]));
+        }
+        //std::transform(str.begin(), str.end(), str.begin(), ::toupper);
     }
     
     inline std::string ToUpperCopy(std::string str)
     {
-        std::transform(str.begin(), str.end(), str.begin(), ::toupper);
+        for(size_t i = 0; i < str.size(); ++i)
+        {
+            str[i] = static_cast<char>(std::toupper(str[i]));
+        }
+        //std::transform(str.begin(), str.end(), str.begin(), ::toupper);
         return str;
     }
     
     inline void ToLower(std::string& str)
     {
-        std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+        for(size_t i = 0; i < str.size(); ++i)
+        {
+            str[i] = static_cast<char>(std::tolower(str[i]));
+        }
+        //std::transform(str.begin(), str.end(), str.begin(), ::tolower);
     }
     
     inline std::string ToLowerCopy(std::string str)
     {
-        std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+        for(size_t i = 0; i < str.size(); ++i)
+        {
+            str[i] = static_cast<char>(std::tolower(str[i]));
+        }
+        //std::transform(str.begin(), str.end(), str.begin(), ::tolower);
         return str;
     }
     
@@ -59,6 +75,15 @@ namespace StringUtil
     inline void Trim(std::string& str)
     {
         Trim(str, ' ');
+    }
+
+    inline void TrimWhitespace(std::string& str)
+    {
+        while(!str.empty() && str.front() == ' ' || str.front() == '\t' || str.back() == ' ' || str.back() == '\t')
+        {
+            Trim(str, ' ');
+            Trim(str, '\t');
+        }
     }
 	
 	inline void TrimComment(std::string& str)
@@ -93,14 +118,14 @@ namespace StringUtil
     {
         // Remove any whitespace on left/right.
         Trim(str);
-        if(str.size() == 0) { return; }
+        if(str.empty()) { return; }
         
         // Check if first char is a quote, and remove if so.
         if(str[0] == '"')
         {
             str.erase(str.begin());
         }
-        if(str.size() == 0) { return; }
+        if(str.empty()) { return; }
         
         // Check if last char is a quote, and remove if so.
         if(str[str.size() - 1] == '"')
@@ -113,6 +138,9 @@ namespace StringUtil
     {
         if(std::getline(is, str))
         {
+            // Get rid of anything after a comment.
+            TrimComment(str);
+
             // "getline" can sometimes leave some unwanted chars on the end of the line, so let's get rid of those.
             // "getline" discards \n on end of lines, but leaves Windows line breaks (\r) - get rid of them!
             // For the last line in a stream, "getline" may add an extra \0 - don't need it, and causes string append bugs.
@@ -175,6 +203,18 @@ namespace StringUtil
         return std::search(str.begin(), str.end(), contains.begin(), contains.end(), iequal()) != str.end();
     }
 
+    inline bool EndsWith(const std::string& str, const std::string& endsWith)
+    {
+        if(endsWith.size() > str.size()) { return false; }
+        return std::equal(endsWith.rbegin(), endsWith.rend(), str.rbegin());
+    }
+
+    inline bool EndsWithIgnoreCase(const std::string& str, const std::string& endsWith)
+    {
+        if(endsWith.size() > str.size()) { return false; }
+        return std::equal(endsWith.rbegin(), endsWith.rend(), str.rbegin(), iequal());
+    }
+
     inline size_t Find(const std::string& str, const std::string& toFind, size_t pos = 0)
     {
         if(str.size() - pos < toFind.size()) { return std::string::npos; }
@@ -204,23 +244,23 @@ namespace StringUtil
     
     inline float ToFloat(const std::string& str)
     {
-        return (float)atof(str.c_str());
+        return static_cast<float>(atof(str.c_str()));
     }
 
 	template<typename ... Args>
-	inline std::string Format(const std::string& format, Args ... args)
+	inline std::string Format(const char* format, Args ... args)
 	{
 		// Calling snprintf with nullptr & 0 buff_size let's you determine the expected size of the result.
 		// Per: https://en.cppreference.com/w/cpp/io/c/fprintf
 		// +1 for the \0 null terminator.
-		size_t size = snprintf(nullptr, 0, format.c_str(), args ...) + 1;
+		size_t size = snprintf(nullptr, 0, format, args ...) + 1;
 		
 		// Allocate a buffer to hold the formatted text.
 		// Using unique_ptr for auto-delete on return or exception.
 		std::unique_ptr<char[]> buf(new char[size]);
 		
 		// Actually put the formatted string in the buffer "for real".
-		snprintf(buf.get(), size, format.c_str(), args ...);
+		snprintf(buf.get(), size, format, args ...);
 		
 		// Create a string from the buffer (-1 b/c we don't need the \0 for the string).
 		return std::string(buf.get(), buf.get() + size - 1);
@@ -232,7 +272,7 @@ namespace StringUtil
         // Taken from http://www.cse.yorku.ca/~oz/hash.html
         unsigned long hash = 5381;
         int c;
-        while((c = *str++))
+        while((c = *str++) != 0)
         {
             hash = ((hash << 5) + hash) ^ std::toupper(c); /* hash * 33 XOR c */
         }

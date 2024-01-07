@@ -23,9 +23,9 @@ public:
         Right
     };
     
-    InputManager();
     ~InputManager();
-    
+
+    void Init();
     void Update();
 
     // Keyboard
@@ -92,6 +92,8 @@ private:
 	// TEXT INPUT
 	TextInput* mTextInput = nullptr;
 };
+
+extern InputManager gInputManager;
 
 inline bool InputManager::IsKeyLeadingEdge(SDL_Scancode scancode)
 {

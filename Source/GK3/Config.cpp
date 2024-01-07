@@ -3,10 +3,12 @@
 #include "StringUtil.h"
 #include "TextWriter.h"
 
-Config::Config(const std::string& name, char* data, int dataLength) : Asset(name)
+void Config::Load(uint8_t* data, uint32_t dataLength)
 {
     // Read in each section and store it.
     IniParser parser(data, dataLength);
+    parser.SetMultipleKeyValuePairsPerLine(false);
+
     IniSection section;
     while(parser.ReadNextSection(section))
     {

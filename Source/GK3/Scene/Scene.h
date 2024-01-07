@@ -9,7 +9,7 @@
 // Room 25, Train Station, etc). The game can only be "in" one scene at a time.
 //
 // From GK3 docs: "a stage is everything associated with a specific game location
-// during a specific timeblock (e.g. Dining Room, Day 1, 10am).
+// during a specific timeblock (e.g. Dining Room, Day 1, 10am)."
 //
 #pragma once
 #include <string>
@@ -47,13 +47,13 @@ class Scene
 {
 public:
     static const char* GetEgoName();
-
-    Scene(const std::string& name, const std::string& timeblock);
-	Scene(const std::string& name, const Timeblock& timeblock);
+    
+	Scene(const std::string& name);
 	~Scene();
 	
 	void Load();
 	void Unload();
+    bool IsLoaded() const { return mSceneData != nullptr; }
 
     void Init();
     void Update(float deltaTime);
@@ -63,7 +63,7 @@ public:
     void SetCameraPositionForConversation(const std::string& conversationName, bool isInitial);
     void GlideToCameraPosition(const std::string& cameraName, std::function<void()> finishCallback);
 	
-	SceneCastResult Raycast(const Ray& ray, bool interactiveOnly, const GKObject* ignore = nullptr) const;
+	SceneCastResult Raycast(const Ray& ray, bool interactiveOnly, GKObject** ignore = nullptr, int ignoreCount = 1) const;
     void Interact(const Ray& ray, GKObject* interactHint = nullptr);
     void SkipCurrentAction();
     
@@ -76,12 +76,13 @@ public:
 	
 	const ScenePosition* GetPosition(const std::string& positionName) const;
     float GetFloorY(const Vector3& position) const;
-    Texture* GetFloorTexture(const Vector3& position) const;
 	
 	void ApplyTextureToSceneModel(const std::string& modelName, Texture* texture);
 	void SetSceneModelVisibility(const std::string& modelName, bool visible);
 	bool IsSceneModelVisible(const std::string& modelName) const;
 	bool DoesSceneModelExist(const std::string& modelName) const;
+
+    void SetGameTimer(const std::string& noun, const std::string& verb, float seconds);
 
     void SetPaused(bool paused);
 
@@ -139,6 +140,7 @@ private:
     std::vector<BSPActor*> mHitTestActors;
 	
 	// The Actor the player is controlling in this scene.
+    const SceneActor* mEgoSceneActor = nullptr;
     GKActor* mEgo = nullptr;
 
     // The name of the last Ego the player was controlling, including the current scene.
@@ -148,6 +150,18 @@ private:
     // The most recently "active" object.
     // In other words, the last object the action bar was shown for.
     GKObject* mActiveObject = nullptr;
+
+    // Timers that tick down and execute a specific noun/verb combo action when done.
+    struct GameTimer
+    {
+        float secondsRemaining = 0.0f;
+        std::string noun;
+        std::string verb;
+    };
+    std::vector<GameTimer> mGameTimers;
+
+    // If true, the scene is paused (won't update).
+    bool mPaused = false;
 
     // Helper class for dealing with scene construction (e.g. editor/tool) support.
     SceneConstruction mConstruction;

@@ -1,19 +1,19 @@
 #include "InventoryManager.h"
 
+#include "AssetManager.h"
 #include "IniParser.h"
 #include "InventoryScreen.h"
 #include "InventoryInspectScreen.h"
 #include "Loader.h"
 #include "Profiler.h"
-#include "Services.h"
 #include "Scene.h"
 #include "StringUtil.h"
 #include "TextAsset.h"
 #include "Texture.h"
 
-TYPE_DEF_BASE(InventoryManager);
+InventoryManager gInventoryManager;
 
-InventoryManager::InventoryManager()
+void InventoryManager::Init()
 {
     TIMER_SCOPED("InventoryManager::InventoryManager");
 
@@ -21,7 +21,7 @@ InventoryManager::InventoryManager()
         TIMER_SCOPED("InventoryManager::Load");
 
         // Get VERBS text file as a raw buffer.
-        TextAsset* textFile = Services::GetAssets()->LoadText("INVENTORYSPRITES.TXT");
+        TextAsset* textFile = gAssetManager.LoadText("INVENTORYSPRITES.TXT", AssetScope::Manual);
 
         // Pass that along to INI parser, since it is plain text and in INI format.
         IniParser parser(textFile->GetText(), textFile->GetTextLength());
@@ -38,56 +38,11 @@ InventoryManager::InventoryManager()
                 // Rather than muck up the parser code, I'll just catch and ignore those lines here.
                 if(entry.key[0] == ';') { continue; }
 
-                // Populate a textures entry for this inventory item.
-                InventoryItemTextures textures;
-
-                // Icon texture has suffix "3".
-                // One asset (MOSELYPRINT_3.BMP) did not follow the naming convention - sigh.
-                textures.iconTexture = Services::GetAssets()->LoadTexture(entry.value + "3.BMP");
-                if(textures.iconTexture == nullptr)
-                {
-                    textures.iconTexture = Services::GetAssets()->LoadTexture(entry.value + "_3.BMP");
-                }
-
-                // Closeup texture has suffix "6" or "6_ALPHA".
-                // One asset (MOSELYPRINT_6_ALPHA.BMP) did not follow the naming convention - yuck.
-                textures.closeupTexture = Services::GetAssets()->LoadTexture(entry.value + "6.BMP");
-                if(textures.closeupTexture == nullptr)
-                {
-                    textures.closeupTexture = Services::GetAssets()->LoadTexture(entry.value + "6_ALPHA.BMP");
-                    if(textures.closeupTexture == nullptr)
-                    {
-                        textures.closeupTexture = Services::GetAssets()->LoadTexture(entry.value + "_6_ALPHA.BMP");
-                    }
-                }
-
-                // List texture has a "9" suffix. Also, optionally, an alpha texture (since these show against a see-through background).
-                textures.listTexture = Services::GetAssets()->LoadTexture(entry.value + "9.BMP");
-                if(textures.listTexture == nullptr)
-                {
-                    textures.listTexture = Services::GetAssets()->LoadTexture(entry.value + "_9.BMP");
-                }
-
-                // If we have a list texture, attempt to find and apply alpha channel.
-                if(textures.listTexture != nullptr)
-                {
-                    Texture* listTextureAlpha = Services::GetAssets()->LoadTexture(entry.value + "9_OP.BMP");
-                    if(listTextureAlpha == nullptr)
-                    {
-                        listTextureAlpha = Services::GetAssets()->LoadTexture(entry.value + "_9_OP.BMP");
-                    }
-                    if(listTextureAlpha != nullptr)
-                    {
-                        textures.listTexture->ApplyAlphaChannel(*listTextureAlpha);
-                    }
-                }
-
                 // Save to map.
-                mInventoryItems[entry.key] = textures;
+                mInventoryItems.emplace(std::make_pair(entry.key, entry.value));
             }
         }
-
-        Services::GetAssets()->UnloadText(textFile);
+        delete textFile;
     });
     
 	// Create inventory screen UI.
@@ -243,15 +198,74 @@ bool InventoryManager::IsInventoryInspectShowing() const
 
 Texture* InventoryManager::GetInventoryItemIconTexture(const std::string& itemName)
 {
-    return mInventoryItems[itemName].iconTexture;
+    // Find the item. If doesn't exist, return null.
+    auto it = mInventoryItems.find(itemName);
+    if(it == mInventoryItems.end()) { return nullptr; }
+
+    // Return cached texture if already loaded.
+    if(it->second.iconTexture != nullptr) { return it->second.iconTexture; }
+
+    // Load the texture fresh.
+    it->second.iconTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "3.BMP");
+    if(it->second.iconTexture == nullptr)
+    {
+        it->second.iconTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "_3.BMP");
+    }
+    return it->second.iconTexture;
 }
 
 Texture* InventoryManager::GetInventoryItemListTexture(const std::string& itemName)
 {
-	return mInventoryItems[itemName].listTexture;
+    // Find the item. If doesn't exist, return null.
+    auto it = mInventoryItems.find(itemName);
+    if(it == mInventoryItems.end()) { return nullptr; }
+
+    // Return cached texture if already loaded.
+    if(it->second.listTexture != nullptr) { return it->second.listTexture; }
+
+    // Otherwise, load the texture!
+    // List texture has a "9" suffix. Also, optionally, an alpha texture (since these show against a see-through background).
+    it->second.listTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "9.BMP");
+    if(it->second.listTexture == nullptr)
+    {
+        it->second.listTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "_9.BMP");
+    }
+
+    // If we have a list texture, attempt to find and apply alpha channel.
+    if(it->second.listTexture != nullptr)
+    {
+        Texture* listTextureAlpha = gAssetManager.LoadTexture(it->second.textureNamePrefix + "9_OP.BMP");
+        if(listTextureAlpha == nullptr)
+        {
+            listTextureAlpha = gAssetManager.LoadTexture(it->second.textureNamePrefix + "_9_OP.BMP");
+        }
+        if(listTextureAlpha != nullptr)
+        {
+            it->second.listTexture->ApplyAlphaChannel(*listTextureAlpha);
+        }
+    }
+    return it->second.listTexture;
 }
 
 Texture* InventoryManager::GetInventoryItemCloseupTexture(const std::string& itemName)
 {
-	return mInventoryItems[itemName].closeupTexture;
+    // Find the item. If doesn't exist, return null.
+    auto it = mInventoryItems.find(itemName);
+    if(it == mInventoryItems.end()) { return nullptr; }
+
+    // Return cached texture if already loaded.
+    if(it->second.closeupTexture != nullptr) { return it->second.closeupTexture; }
+
+    // Closeup texture has suffix "6" or "6_ALPHA".
+    // One asset (MOSELYPRINT_6_ALPHA.BMP) did not follow the naming convention - yuck.
+    it->second.closeupTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "6.BMP");
+    if(it->second.closeupTexture == nullptr)
+    {
+        it->second.closeupTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "6_ALPHA.BMP");
+        if(it->second.closeupTexture == nullptr)
+        {
+            it->second.closeupTexture = gAssetManager.LoadTexture(it->second.textureNamePrefix + "_6_ALPHA.BMP");
+        }
+    }
+    return it->second.closeupTexture;
 }

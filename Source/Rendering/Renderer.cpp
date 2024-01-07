@@ -7,19 +7,24 @@
 #include <vector>
 
 #include "Actor.h"
+#include "AssetManager.h"
 #include "BSP.h"
-#include "Debug.h"
 #include "Camera.h"
+#include "Debug.h"
+#include "GAPI.h"
 #include "Matrix4.h"
 #include "MeshRenderer.h"
 #include "Model.h"
 #include "Profiler.h"
 #include "RenderTransforms.h"
+#include "SceneManager.h"
 #include "SaveManager.h"
 #include "Shader.h"
 #include "Skybox.h"
 #include "Texture.h"
 #include "UICanvas.h"
+
+#include "OpenGL/GAPI_OpenGL.h"
 
 // Line
 float line_vertices[] = {
@@ -84,62 +89,40 @@ float ui_quad_uvs[] = {
 };
 Mesh* uiQuad = nullptr;
 
+Renderer gRenderer;
+
 bool Renderer::Initialize()
 {
     TIMER_SCOPED("Renderer::Initialize");
 
+    // Create the game window.
     Window::Create("Gabriel Knight 3");
-
-    // Tell SDL we want to use OpenGL 3.3
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    
-    // Request some GL parameters, just in case
-    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
-    
-    // Create OpenGL context.
-    mContext = SDL_GL_CreateContext(Window::Get());
-    //DumpVideoInfo(mWindow);
-	
-    // Initialize GLEW.
-    glewExperimental = GL_TRUE;
-    if(glewInit() != GLEW_OK)
+    if(Window::Get() == nullptr)
     {
-        SDL_Log("Failed to initialize GLEW.");
+        printf("Failed to create game window!\n");
         return false;
     }
-    
-    // Clear any GLEW error.
-    glGetError();
-    
-    // Our clear color will be BLACK!
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    
-    // For use with alpha blending during render loop.
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    
+
+    // Set which graphics API to use.
+    GAPI::Set<GAPI_OpenGL>();
+
+    // Make sure the viewport is set to the full window size.
+    GAPI::Get()->SetViewport(0, 0, Window::GetWidth(), Window::GetHeight());
+
+    // Graphics APIs are inconsistent with their conventions about whether view space should be left or right-handed.
+    // However, we can configure the graphics API to use whichever approach we prefer by altering their defaults.
     #if VIEW_HAND == VIEW_LH
-    // We can use left-hand or right-hand view space, but GL's depth buffer defaults assume right-hand.
-    // If using left-hand, we essentially "flip" the depth buffer.
-    // Clear to 0 (instead of 1) and use GL_GREATER for depth tests (rather than GL_LESS).
-    glClearDepth(0);
-    glDepthFunc(GL_GREATER);
+    GAPI::Get()->SetViewSpaceHandedness(GAPI::Handedness::LeftHand);
+    #else
+    GAPI::Get()->SetViewSpaceHandedness(GAPI::Handedness:RightHand);
     #endif
 
     // GK3 vertex data for models & BSP use a clockwise winding order.
-    // However, note that *indexes* are counter-clockwise...but that doesn't seem to affect how OpenGL interprets the data!
-    glFrontFace(GL_CW);
+    // However, note that *indexes* are counter-clockwise...but that doesn't seem to affect how the data is interpreted?
+    GAPI::Get()->SetPolygonWindingOrder(GAPI::WindingOrder::Clockwise);
 	
     // Load default shader.
-	Shader* defaultShader = Services::GetAssets()->LoadShader("3D-Tex");
+	Shader* defaultShader = gAssetManager.LoadShader("3D-Tex");
 	if(defaultShader == nullptr) { return false; }
 	Material::sDefaultShader = defaultShader;
 
@@ -148,14 +131,15 @@ bool Renderer::Initialize()
     // Avoid dealing with background thread loading of shaders by loading them all up front.
     std::string shaders[] = {
         "3D-Lightmap",
-        "3D-Tex-Lit"
-        //TODO: Others?
+        "3D-Tex-Lit",
+        "3D-Skybox"
     };
     for(auto& shader : shaders)
     {
         //printf("Load %s\n", shader.c_str());
-        Services::GetAssets()->LoadShader(shader);
+        gAssetManager.LoadShader(shader);
     }
+    gAssetManager.LoadShader("3D-Tex", "UI-Text-ColorReplace");
 
     // Create simple shapes (useful for debugging/visualization).
     // Line
@@ -226,21 +210,22 @@ bool Renderer::Initialize()
 
 void Renderer::Shutdown()
 {
-    SDL_GL_DeleteContext(mContext);
+    GAPI::Get()->Shutdown();
     Window::Destroy();
 }
 
 void Renderer::Clear()
 {
     PROFILER_BEGIN_SAMPLE("Renderer Clear");
+
     // Enable opaque rendering (no blend, write to & test depth buffer).
     // Do this BEFORE clear to avoid some glitchy graphics.
-    glDisable(GL_BLEND); // do not perform alpha blending (opaque rendering)
-    glDepthMask(GL_TRUE); // start writing to depth buffer
-    glEnable(GL_DEPTH_TEST); // do depth comparisons and update the depth buffer
+    GAPI::Get()->SetBlendEnabled(false);
+    GAPI::Get()->SetDepthWriteEnabled(true);
+    GAPI::Get()->SetDepthTestEnabled(true);
 
     // Clear color and depth buffers from last frame.
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    GAPI::Get()->Clear(Color32::Black);
     PROFILER_END_SAMPLE();
 }
 
@@ -261,7 +246,7 @@ void Renderer::Render()
         // SKYBOX RENDERING
         // Draw the skybox first, which is just a little cube around the camera.
         // Don't write to depth mask, or else you can ONLY see skybox (b/c again, little cube).
-        glDepthMask(GL_FALSE); // stops writing to depth buffer
+        GAPI::Get()->SetDepthWriteEnabled(false);
         if(mSkybox != nullptr)
         {
             // To get the "infinite distance" skybox effect, we need to use a look-at
@@ -270,14 +255,14 @@ void Renderer::Render()
             Material::SetProjMatrix(projectionMatrix);
             mSkybox->Render();
         }
-        glDepthMask(GL_TRUE); // start writing to depth buffer
+        GAPI::Get()->SetDepthWriteEnabled(true);
         PROFILER_END_SAMPLE();
 
         PROFILER_BEGIN_SAMPLE("Render BSP");
         // OPAQUE BSP RENDERING
         // All opaque world rendering uses alpha test.
         Material::UseAlphaTest(true);
-        glEnable(GL_CULL_FACE);
+        GAPI::Get()->SetPolygonCullMode(GAPI::CullMode::Back);
         
         // Set the view & projection matrices for normal 3D camera-oriented rendering.
         Material::SetViewMatrix(viewMatrix);
@@ -299,25 +284,34 @@ void Renderer::Render()
         {
             meshRenderer->Render();
         }
-        
+
         // Turn off alpha test.
         Material::UseAlphaTest(false);
-        glDisable(GL_CULL_FACE);
+        GAPI::Get()->SetPolygonCullMode(GAPI::CullMode::None);
         PROFILER_END_SAMPLE();
-        
+
+        PROFILER_BEGIN_SAMPLE("Render Translucent BSP");
         // TRANSLUCENT WORLD RENDERING
-        // So far, GK3 doesn't seem to have any translucent geometry AT ALL!
-        // Everything is either opaque or alpha test.
-        // If we DO need translucent rendering, it probably can only be meshes or BSP, but not both.
-        //TODO: Any translucent world rendering.
+        GAPI::Get()->SetBlendEnabled(true);       // enable blending
+        GAPI::Get()->SetDepthWriteEnabled(false); // don't write to depth buffer
+        GAPI::Get()->SetDepthTestEnabled(true);   // do still test depth buffer
+
+        // Currently all translucent BSP are shadow textures or decals, which look great with Multiply blend mode.
+        GAPI::Get()->SetBlendMode(GAPI::BlendMode::Multiply); 
+        if(mBSP != nullptr)
+        {
+            mBSP->RenderTranslucent();
+        }
+        PROFILER_END_SAMPLE();
     }
 
     PROFILER_BEGIN_SAMPLE("Render UI");
     // UI RENDERING (TRANSLUCENT)
-    glEnable(GL_BLEND); // do alpha blending
-    glDepthMask(GL_FALSE); // don't write to the depth buffer
-    glDisable(GL_DEPTH_TEST); // no depth test b/c UI draws over everything
-    
+    GAPI::Get()->SetBlendEnabled(true);       // enable blending
+    GAPI::Get()->SetDepthWriteEnabled(false); // don't write to depth buffer
+    GAPI::Get()->SetDepthTestEnabled(false);  // no depth test b/c UI draws over everything
+    GAPI::Get()->SetBlendMode(GAPI::BlendMode::AlphaBlend);
+
     // UI uses a view/proj setup for now - world space for UI maps to pixel size of screen.
     // Bottom-left corner of screen is origin, +x is right, +y is up.
     Material::SetViewMatrix(Matrix4::Identity);
@@ -336,18 +330,20 @@ void Renderer::Render()
     // OPAQUE DEBUG RENDERING
     // Switch back to opaque rendering for debug rendering.
     // Debug rendering happens after all else, so any previous function can ask for debug draws successfully.
-    glDisable(GL_BLEND); // do opaque rendering
+    GAPI::Get()->SetBlendEnabled(false); // do opaque rendering
 
     // If depth test is enabled, debug visualizations will be obscured by geometry.
     // This is sometimes helpful, sometimes not...so toggle it on/off as needed.
-    glEnable(GL_DEPTH_TEST);
+    GAPI::Get()->SetDepthTestEnabled(true);
 
     // Gotta reset view/proj again...
     Material::SetViewMatrix(viewMatrix);
     Material::SetProjMatrix(projectionMatrix);
-    
+
+    #if defined(_DEBUG)
     // Render an axis at the world origin.
     Debug::DrawAxes(Vector3::Zero);
+    #endif
     
     // Render debug elements.
     // Any debug commands from earlier are queued internally, and only drawn when this is called!
@@ -359,7 +355,7 @@ void Renderer::Present()
 {
     // Present to window.
     PROFILER_BEGIN_SAMPLE("Renderer Present");
-    SDL_GL_SwapWindow(Window::Get());
+    GAPI::Get()->Present();
     PROFILER_END_SAMPLE();
 }
 
@@ -388,7 +384,7 @@ void Renderer::SetUseMipmaps(bool useMipmaps)
     gSaveManager.GetPrefs()->Set(PREFS_HARDWARE_RENDERER, PREFS_MIPMAPS, mUseMipmaps);
 
     // Dynamically update loaded textures to use mipmaps.
-    for(auto& entry : Services::GetAssets()->GetLoadedTextures())
+    for(auto& entry : gAssetManager.GetLoadedTextures())
     {
         // The trick is that this map has both UI and scene textures. And we only want to modify *scene* textures.
         // We can look at the current filtering setting as an indicator.
@@ -406,7 +402,7 @@ void Renderer::SetUseTrilinearFiltering(bool useTrilinearFiltering)
     gSaveManager.GetPrefs()->Set(PREFS_HARDWARE_RENDERER, PREFS_TRILINEAR_FILTERING, mUseTrilinearFiltering);
 
     // Dynamically update loaded textures to use trilinear filtering.
-    for(auto& entry : Services::GetAssets()->GetLoadedTextures())
+    for(auto& entry : gAssetManager.GetLoadedTextures())
     {
         // The trick is that this map has both UI and scene textures. And we only want to modify *scene* textures.
         // We can look at the current filtering setting as an indicator.
@@ -422,12 +418,12 @@ void Renderer::ChangeResolution(const Window::Resolution& resolution)
 {
     Window::SetResolution(resolution);
     
-    // Change the OpenGL viewport to match the new width/height.
+    // Change the viewport to match the new width/height.
     // If you don't do this, the window size changes but the area rendered to doesn't change.
-    glViewport(0, 0, resolution.width, resolution.height);
+    GAPI::Get()->SetViewport(0, 0, resolution.width, resolution.height);
 
     // Because some RectTransforms may rely on the window size, we need to dirty all root RectTransforms in the scene.
-    for(auto& actor : GEngine::Instance()->GetActors())
+    for(auto& actor : gSceneManager.GetActors())
     {
         if(actor->GetTransform()->GetParent() == nullptr &&
            actor->GetTransform()->IsTypeOf(RectTransform::GetType()))

@@ -3,23 +3,25 @@
 #include <cstring>
 #include <iostream>
 
+#include "AssetManager.h"
 #include "Audio.h"
+#include "GEngine.h"
 #include "GMath.h"
 #include "Profiler.h"
 #include "SaveManager.h"
-#include "Services.h"
-#include "Vector3.h"
 
-PlayingSoundHandle::PlayingSoundHandle(FMOD::Channel* channel, Audio* audio) :
+AudioManager gAudioManager;
+
+PlayingSoundHandle::PlayingSoundHandle(FMOD::Channel* channel, FMOD::Sound* sound) :
     channel(channel),
-    audio(audio)
+    sound(sound)
 {
-    
+    mStartFrame = GEngine::Instance()->GetFrameNumber();
 }
 
 void PlayingSoundHandle::Stop(float fadeOutTime)
 {
-    Services::GetAudio()->Stop(*this, fadeOutTime);
+    gAudioManager.Stop(*this, fadeOutTime);
 }
 
 void PlayingSoundHandle::Pause()
@@ -35,16 +37,6 @@ void PlayingSoundHandle::Resume()
     if(channel != nullptr)
     {
         channel->setPaused(false);
-    }
-}
-
-void PlayingSoundHandle::SetVolume(float volume)
-{
-    // This may fail if the channel handle is no longer valid.
-    // But that means we're trying to set volume for a sound that's not playing. So...it doesn't matter.
-    if(channel != nullptr)
-    {
-        channel->setVolume(Math::Clamp(volume, 0.0f, 1.0f));
     }
 }
 
@@ -68,6 +60,24 @@ bool PlayingSoundHandle::IsPlaying() const
     
     // Assuming OK was returned, either the channel is playing or not!
     return isPlaying;
+}
+
+void PlayingSoundHandle::SetVolume(float volume)
+{
+    // This may fail if the channel handle is no longer valid.
+    // But that means we're trying to set volume for a sound that's not playing. So...it doesn't matter.
+    if(channel != nullptr)
+    {
+        channel->setVolume(Math::Clamp(volume, 0.0f, 1.0f));
+    }
+}
+
+void PlayingSoundHandle::SetPosition(const Vector3& position)
+{
+    if(channel != nullptr)
+    {
+        channel->set3DAttributes((const FMOD_VECTOR*)&position, nullptr);
+    }
 }
 
 bool Fader::Update(float deltaTime)
@@ -209,6 +219,15 @@ bool AudioManager::Initialize()
         std::cout << FMOD_ErrorString(result) << std::endl;
         return false;
     }
+
+    // After some trial/error, it seems like GK3's rolloff is quicker than FMOD's default.
+    // Using a value of 2.0f for "rolloffScale" causes volume to diminish a bit more quickly as you move away from an object.
+    result = mSystem->set3DSettings(1.0f, 1.0f, 2.0f);
+    if(result != FMOD_OK)
+    {
+        std::cout << FMOD_ErrorString(result) << std::endl;
+        return false;
+    }
     
     // Create SFX channel group.
     result = mSystem->createChannelGroup("SFX", &mSFXChannelGroup);
@@ -282,7 +301,15 @@ bool AudioManager::Initialize()
 
     float musicVolume = prefs->GetInt(PREFS_SOUND, PREFS_MUSIC_VOLUME, 100) / 100.0f;
     SetVolume(AudioType::Music, musicVolume);
-    
+
+    // Grab defaults from GAME.CFG.
+    Config* config = gAssetManager.LoadConfig("GAME.CFG");
+    if(config != nullptr)
+    {
+        mDefault3DMinDist = config->GetFloat("Sound", "Default Sound Min Distance", mDefault3DMinDist);
+        mDefault3DMaxDist = config->GetFloat("Sound", "Default Sound Max Distance", mDefault3DMaxDist);
+    }
+
     // We initialized audio successfully!
     return true;
 }
@@ -290,17 +317,21 @@ bool AudioManager::Initialize()
 void AudioManager::Shutdown()
 {
 	// Close and release FMOD system.
-    FMOD_RESULT result = mSystem->close();
-    result = mSystem->release();
+    mSystem->close();
+    mSystem->release();
+    mSystem = nullptr;
 }
 
 void AudioManager::Update(float deltaTime)
 {
     // Update FMOD system every frame.
-    mSystem->update();
+    if(mSystem != nullptr)
+    {
+        mSystem->update();
+    }
 
     // Update faders.
-    for(int i = 0; i < mFaders.size(); ++i)
+    for(size_t i = 0; i < mFaders.size(); ++i)
     {
         if(mFaders[i].Update(deltaTime))
         {
@@ -331,14 +362,38 @@ void AudioManager::Update(float deltaTime)
             }
         }
     }
+
+    // We just checked for stopped sounds, so all playing sounds are actually playing.
+    // So, we can release any waiting FMOD::Sounds if no playing sound is using it.
+    for(int i = mWaitingToRelease.size() - 1; i >= 0; --i)
+    {
+        bool stillPlaying = false;
+        for(auto& playingSound : mPlayingSounds)
+        {
+            if(playingSound.sound == mWaitingToRelease[i])
+            {
+                stillPlaying = true;
+                break;
+            }
+        }
+
+        // Not playing? Release it finally!
+        if(!stillPlaying)
+        {
+            DestroySound(mWaitingToRelease[i]);
+
+            std::swap(mWaitingToRelease[i], mWaitingToRelease.back());
+            mWaitingToRelease.pop_back();
+        }
+    }
     
     /*
     // For testing fade in/out behavior.
-    if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_M))
+    if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_M))
     {
         mAmbientFadeChannelGroups[mCurrentAmbientIndex].SetFade(1.0f, 1.0f);
     }
-    if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_N))
+    if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_N))
     {
         mAmbientFadeChannelGroups[mCurrentAmbientIndex].SetFade(1.0f, 0.0f);
     }
@@ -357,67 +412,110 @@ void AudioManager::UpdateListener(const Vector3& position, const Vector3& veloci
 
 PlayingSoundHandle AudioManager::PlaySFX(Audio* audio, std::function<void()> finishCallback)
 {
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-
-    PlayingSoundHandle& soundHandle = CreateAndPlaySound2D(audio, AudioType::SFX);
-    soundHandle.mFinishCallback = finishCallback;
-    return soundHandle;
+    PlayAudioParams params;
+    params.audio = audio;
+    params.audioType = AudioType::SFX;
+    params.finishCallback = finishCallback;
+    return Play(params);
 }
 
-PlayingSoundHandle AudioManager::PlaySFX3D(Audio* audio, const Vector3& position, float minDist, float maxDist)
+PlayingSoundHandle AudioManager::Play(const PlayAudioParams& params)
 {
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-    return CreateAndPlaySound3D(audio, AudioType::SFX, position, minDist, maxDist);
-}
+    // We need a valid audio asset, for one.
+    if(params.audio == nullptr) { return PlayingSoundHandle(); }
 
-PlayingSoundHandle AudioManager::PlayVO(Audio* audio)
-{
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-    return CreateAndPlaySound2D(audio, AudioType::VO);
-}
-
-PlayingSoundHandle AudioManager::PlayVO3D(Audio* audio, const Vector3& position, float minDist, float maxDist)
-{
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-    return CreateAndPlaySound3D(audio, AudioType::VO, position, minDist, maxDist);
-}
-
-PlayingSoundHandle AudioManager::PlayAmbient(Audio* audio, float fadeInTime)
-{
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-    return CreateAndPlaySound2D(audio, AudioType::Ambient);
-}
-
-PlayingSoundHandle AudioManager::PlayAmbient3D(Audio* audio, const Vector3& position, float minDist, float maxDist)
-{
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-    return CreateAndPlaySound3D(audio, AudioType::Ambient, position, minDist, maxDist);
-}
-
-PlayingSoundHandle AudioManager::PlayMusic(Audio* audio, float fadeInTime)
-{
-    if(audio == nullptr) { return PlayingSoundHandle(); }
-
-    PlayingSoundHandle& soundHandle = CreateAndPlaySound2D(audio, AudioType::Music);
-    if(!Math::IsZero(fadeInTime))
+    // Create the sound from the audio buffer.
+    FMOD::Sound* sound = CreateSound(params.audio, params.audioType, params.is3d, (params.loopCount < 0 || params.loopCount > 0));
+    if(sound == nullptr)
     {
-        mFaders.emplace_back(soundHandle.channel);
-        mFaders.back().SetFade(fadeInTime, 1.0f, 0.0f);
+        return PlayingSoundHandle();
     }
-    return soundHandle;
+
+    // Create the channel that will play the sound in the correct channel group.
+    FMOD::Channel* channel = CreateChannel(sound, GetChannelGroupForAudioType(params.audioType));
+    if(channel == nullptr)
+    {
+        return PlayingSoundHandle();
+    }
+
+    // Add to playing sounds.
+    mPlayingSounds.emplace_back(channel, sound);
+
+    // Store finish callback.
+    mPlayingSounds.back().mFinishCallback = params.finishCallback;
+
+    // If 3D, set positional and distance parameters.
+    if(params.is3d)
+    {
+        // Sometimes, callers may pass negative values to mean "use default" for min/max dists.
+        float minDist = params.minDist;
+        float maxDist = params.maxDist;
+
+        if(minDist < 0.0f) { minDist = mDefault3DMinDist; }
+        if(maxDist < 0.0f) { maxDist = mDefault3DMaxDist; }
+
+        // Make sure min/max dist are in valid ranges.
+        if(maxDist < minDist) { maxDist = minDist; }
+        if(minDist > maxDist) { minDist = maxDist; }
+
+        // Set distance attributes.
+        channel->set3DMinMaxDistance(minDist, maxDist);
+
+        // Set position and no velocity.
+        channel->set3DAttributes((const FMOD_VECTOR*)&params.position, nullptr);
+    }
+
+    // Set looping behavior for the channel.
+    channel->setLoopCount(params.loopCount);
+    if(params.loopCount < 0 || params.loopCount > 0)
+    {
+        // Add LOOP flag to channel. This allows looping to occur.
+        // Note however that the SOUND must also have been loaded with the LOOP flag for *seamless* looping.
+        FMOD_MODE mode;
+        channel->getMode(&mode);
+        mode |= FMOD_LOOP_NORMAL;
+        channel->setMode(mode);
+    }
+
+    // Handle fade-in time if specified.
+    float volume = Math::Clamp(params.volume, 0.0f, 1.0f);
+    if(!Math::IsZero(params.fadeInTime))
+    {
+        // Force channel volume to start value to avoid any single frame wrong volumes.
+        channel->setVolume(0.0f);
+
+        // Create a fader, which will tick each frame and adjust volume as needed.
+        mFaders.emplace_back(channel);
+        mFaders.back().SetFade(params.fadeInTime, volume, 0.0f);
+    }
+    else
+    {
+        // If not fading in, just set the volume directly.
+        channel->setVolume(volume);
+    }
+
+    // Ok, all attributes should be set - let's play the sound!
+    channel->setPaused(false);
+
+    // Return handle to caller.
+    return mPlayingSounds.back();
 }
 
 void AudioManager::Stop(Audio* audio)
 {
     if(audio != nullptr)
     {
-        for(auto& sound : mPlayingSounds)
+        auto it = mFmodAudioData.find(audio);
+        if(it != mFmodAudioData.end())
         {
-            if(sound.audio == audio)
+            for(auto& sound : mPlayingSounds)
             {
-                // After stopping, sound is removed from playing sounds during next update loop.
-                Stop(sound);
-                return;
+                if(sound.sound == it->second)
+                {
+                    // After stopping, sound is removed from playing sounds during next update loop.
+                    Stop(sound);
+                    return;
+                }
             }
         }
     }
@@ -450,7 +548,7 @@ void AudioManager::StopAll()
     mPlayingSounds.clear();
 }
 
-void AudioManager::StopOnOrAfterFrame(uint32 frame)
+void AudioManager::StopOnOrAfterFrame(uint32_t frame)
 {
     for(auto& sound : mPlayingSounds)
     {
@@ -465,6 +563,39 @@ void AudioManager::StopOnOrAfterFrame(uint32 frame)
 
         // Stop this sound.
         sound.Stop();
+    }
+}
+
+void AudioManager::ReleaseAudioData(Audio* audio)
+{
+    // Find whether FMOD sound data exists for this audio file.
+    auto it = mFmodAudioData.find(audio);
+    if(it != mFmodAudioData.end())
+    {
+        // See if the sound is still playing.
+        bool stillPlaying = false;
+        for(auto& playingSound : mPlayingSounds)
+        {
+            if(playingSound.sound == it->second)
+            {
+                stillPlaying = true;
+                break;
+            }
+        }
+
+        // If still playing, add it to list of data to release AFTER done playing.
+        // Otherwise, we can release it right now!
+        if(stillPlaying)
+        {
+            mWaitingToRelease.push_back(it->second);
+        }
+        else
+        {
+            DestroySound(it->second);
+        }
+
+        // Erase audio->sound mapping.
+        mFmodAudioData.erase(it);
     }
 }
 
@@ -485,7 +616,7 @@ float AudioManager::GetMasterVolume() const
 
 void AudioManager::SetVolume(AudioType audioType, float volume)
 {
-    FMOD::ChannelGroup* channelGroup = GetChannelGroupForAudioType(audioType, true);
+    FMOD::ChannelGroup* channelGroup = GetChannelGroupForAudioType(audioType);
     if(channelGroup == nullptr) { return; }
 
     // Clamp input volume to 0-1 range.
@@ -511,6 +642,7 @@ void AudioManager::SetVolume(AudioType audioType, float volume)
     case AudioType::Music:
         multiplier = kMusicVolumeMultiplier;
         gSaveManager.GetPrefs()->Set(PREFS_SOUND, PREFS_MUSIC_VOLUME, static_cast<int>(volume * 100));
+        break;
     default:
         multiplier = 1.0f;
         break;
@@ -522,7 +654,7 @@ void AudioManager::SetVolume(AudioType audioType, float volume)
 
 float AudioManager::GetVolume(AudioType audioType) const
 {
-    FMOD::ChannelGroup* channelGroup = GetChannelGroupForAudioType(audioType, true);
+    FMOD::ChannelGroup* channelGroup = GetChannelGroupForAudioType(audioType);
     if(channelGroup == nullptr) { return 0.0f; }
     
     float volume = 0.0f;
@@ -545,7 +677,7 @@ bool AudioManager::GetMuted()
 
 void AudioManager::SetMuted(AudioType audioType, bool mute)
 {
-    GetChannelGroupForAudioType(audioType, true)->setMute(mute);
+    GetChannelGroupForAudioType(audioType)->setMute(mute);
 
     // Save prefs (grr, more switches).
     switch(audioType)
@@ -568,7 +700,7 @@ void AudioManager::SetMuted(AudioType audioType, bool mute)
 bool AudioManager::GetMuted(AudioType audioType)
 {
     bool mute = false;
-    GetChannelGroupForAudioType(audioType, true)->getMute(&mute);
+    GetChannelGroupForAudioType(audioType)->getMute(&mute);
     return mute;
 }
 
@@ -628,7 +760,86 @@ void AudioManager::RestoreAudioState(AudioSaveState& audioSaveState)
     mPlayingSounds.insert(mPlayingSounds.end(), audioSaveState.playingSounds.begin(), audioSaveState.playingSounds.end());
 }
 
-FMOD::ChannelGroup* AudioManager::GetChannelGroupForAudioType(AudioType audioType, bool forVolume) const
+FMOD::Sound* AudioManager::CreateSound(Audio* audio, AudioType audioType, bool is3D, bool isLooping)
+{
+    // If we've already got an FMOD sound instance for this Audio, use that.
+    // NOTE: we're assuming previous audio data was loaded with same "is3D" and "isLooping" flags.
+    // NOTE: if that's not the case in the future, may need to revise this.
+    auto it = mFmodAudioData.find(audio);
+    if(it != mFmodAudioData.end())
+    {
+        return it->second;
+    }
+
+    // Need to pass FMOD the length of audio data.
+    FMOD_CREATESOUNDEXINFO exinfo;
+    memset(&exinfo, 0, sizeof(FMOD_CREATESOUNDEXINFO));
+    exinfo.cbsize = sizeof(FMOD_CREATESOUNDEXINFO);
+    exinfo.length = audio->GetDataBufferLength();
+
+    // Determine flags.
+    FMOD_MODE mode = FMOD_OPENMEMORY; // treat passed pointer as memory instead of a filename
+    if(is3D)
+    {
+        mode |= FMOD_3D | FMOD_3D_LINEARSQUAREROLLOFF;
+    }
+    mode |= (isLooping ? FMOD_LOOP_NORMAL : FMOD_LOOP_OFF);
+
+    // For music and ambient audio, stream it to avoid FPS drops when loading.
+    // To stream the audio, we need to make sure the streaming buffer is never deleted while we're using it.
+    // To achieve this, I'll just make a copy of the audio data.
+    uint8_t* audioBuffer = audio->GetDataBuffer();
+    if(audioType == AudioType::Ambient || audioType == AudioType::Music)
+    {
+        mode |= FMOD_CREATESTREAM;
+        audioBuffer = new uint8_t[audio->GetDataBufferLength()];
+        memcpy(audioBuffer, audio->GetDataBuffer(), exinfo.length);
+    }
+
+    // Create the sound using the audio data buffer.
+    FMOD::Sound* sound = nullptr;
+    FMOD_RESULT result = mSystem->createSound(reinterpret_cast<char*>(audioBuffer), mode, &exinfo, &sound);
+    if(result != FMOD_OK)
+    {
+        std::cout << FMOD_ErrorString(result) << std::endl;
+    }
+
+    // If we made a copy of the audio data (for streaming audio), save it as userdata so we can delete it later.
+    if(audioBuffer != audio->GetDataBuffer())
+    {
+        sound->setUserData(audioBuffer);
+    }
+
+    // Cache sound for reuse if this Audio is played again.
+    mFmodAudioData[audio] = sound;
+
+    // Return sound.
+    return sound;
+}
+
+void AudioManager::DestroySound(FMOD::Sound* sound)
+{
+    // If userdata was set for this sound, it is audio data that was created for this sound.
+    // Since the sound is being destroyed, the associated audio data can also be destroyed.
+    void* userData = nullptr;
+    sound->getUserData(&userData);
+
+    // Only release the sound if the system is valid.
+    // In the case of cleaning up after shutdown, the system has already been released, so the sound has also been released.
+    if(mSystem != nullptr)
+    {
+        sound->release();
+    }
+
+    // Destroy the audio data buffer associated with the sound, if any.
+    if(userData != nullptr)
+    {
+        uint8_t* audioData = static_cast<uint8_t*>(userData);
+        delete[] audioData;
+    }
+}
+
+FMOD::ChannelGroup* AudioManager::GetChannelGroupForAudioType(AudioType audioType) const
 {
     switch(audioType)
     {
@@ -642,95 +853,6 @@ FMOD::ChannelGroup* AudioManager::GetChannelGroupForAudioType(AudioType audioTyp
     case AudioType::Music:
         return mMusicChannelGroup;
     }
-}
-
-PlayingSoundHandle& AudioManager::CreateAndPlaySound2D(Audio* audio, AudioType audioType)
-{
-    // Create the sound from the audio buffer.
-    FMOD::Sound* sound = CreateSound(audio, false);
-    if(sound == nullptr)
-    {
-        return mInvalidSoundHandle;
-    }
-
-    // Create the channel that will play the sound in the correct channel group.
-    FMOD::Channel* channel = CreateChannel(sound, GetChannelGroupForAudioType(audioType, false));
-    if(channel == nullptr)
-    {
-        return mInvalidSoundHandle;
-    }
-
-    // For 2D audio, we don't need to set any additional attributes. So, just unpause it right away.
-    channel->setPaused(false);
-
-    // Create and return sound handle.
-    mPlayingSounds.emplace_back(channel, audio);
-    mPlayingSounds.back().mStartFrame = GEngine::Instance()->GetFrameNumber();
-    return mPlayingSounds.back();
-}
-
-PlayingSoundHandle& AudioManager::CreateAndPlaySound3D(Audio* audio, AudioType audioType, const Vector3 &position, float minDist, float maxDist)
-{
-    // Create the 3D sound from the audio buffer.
-    FMOD::Sound* sound = CreateSound(audio, true);
-    if(sound == nullptr)
-    {
-        return mInvalidSoundHandle;
-    }
-
-    // Create the channel that will play the sound in the correct channel group.
-    FMOD::Channel* channel = CreateChannel(sound, GetChannelGroupForAudioType(audioType, false));
-    if(channel == nullptr)
-    {
-        return mInvalidSoundHandle;
-    }
-
-    // Sometimes, callers may pass negative values to mean "use default" for min/max dists.
-    if(minDist < 0.0f) { minDist = kDefault3DMinDist; }
-    if(maxDist < 0.0f) { maxDist = kDefault3DMaxDist; }
-
-    // Make sure min/max dist are in valid ranges.
-    if(maxDist < minDist) { maxDist = minDist; }
-    if(minDist > maxDist) { minDist = maxDist; }
-
-    // Set distance attributes.
-    channel->set3DMinMaxDistance(minDist, maxDist);
-
-    // Set position.
-    channel->set3DAttributes((const FMOD_VECTOR*)&position, nullptr);
-
-    // Play the sound. Important to do this AFTER setting 3D attributes for correct results.
-    channel->setPaused(false);
-
-    // Create and return sound handle.
-    mPlayingSounds.emplace_back(channel, audio);
-    mPlayingSounds.back().mStartFrame = GEngine::Instance()->GetFrameNumber();
-    return mPlayingSounds.back();
-}
-
-FMOD::Sound* AudioManager::CreateSound(Audio* audio, bool is3D)
-{
-    // Need to pass FMOD the length of audio data.
-    FMOD_CREATESOUNDEXINFO exinfo;
-    memset(&exinfo, 0, sizeof(FMOD_CREATESOUNDEXINFO));
-    exinfo.cbsize = sizeof(FMOD_CREATESOUNDEXINFO);
-    exinfo.length = audio->GetDataBufferLength();
-
-    // Determine flags.
-    FMOD_MODE mode = FMOD_OPENMEMORY | FMOD_LOOP_OFF;
-    if(is3D)
-    {
-        mode |= FMOD_3D | FMOD_3D_LINEARSQUAREROLLOFF;
-    }
-
-    // Create the sound using the audio buffer.
-    FMOD::Sound* sound = nullptr;
-    FMOD_RESULT result = mSystem->createSound(audio->GetDataBuffer(), mode, &exinfo, &sound);
-    if(result != FMOD_OK)
-    {
-        std::cout << FMOD_ErrorString(result) << std::endl;
-    }
-    return sound;
 }
 
 FMOD::Channel* AudioManager::CreateChannel(FMOD::Sound* sound, FMOD::ChannelGroup* channelGroup)

@@ -4,13 +4,13 @@
 // A compiled and linked shader program.
 //
 #pragma once
-#include <string>
-#include <vector>
+#include "Asset.h"
 
-#include <GL/glew.h>
+#include <string>
 
 class Color32;
 class Matrix4;
+class TextAsset;
 class Vector3;
 class Vector4;
 
@@ -45,10 +45,10 @@ struct Uniform
     std::string name;
 };
 
-class Shader
+class Shader : public Asset
 {
 public:
-    Shader(const char* vertShaderPath, const char* fragShaderPath);
+    Shader(const std::string& name, TextAsset* vertShaderBytes, TextAsset* fragShaderBytes);
     ~Shader();
     
     void Activate();
@@ -63,19 +63,11 @@ public:
     
     void SetUniformColor(const char* name, const Color32& color);
     
-    bool IsGood() const { return mProgram != GL_NONE; }
+    //bool IsGood() const { return mShaderHandle != nullptr; }
+    bool IsGood() const { return mShaderHandle != 0; }
     
 private:
-    // Handle to the compiled and linked GL shader program.
-    GLuint mProgram = GL_NONE;
-    
-    // Uniforms for this shader, excluding "built-in" ones.
-    //std::vector<Uniform> mUniforms;
-    
-    GLuint LoadAndCompileShaderFromFile(const char* filePath, GLuint shaderType);
-    
-    bool IsShaderCompiled(GLuint shader);
-    bool IsProgramLinked(GLuint program);
-
-    void RefreshUniforms();
+    // Handle to shader in underlying graphics system.
+    //void* mShaderHandle = nullptr;
+    unsigned int mShaderHandle = 0;
 };

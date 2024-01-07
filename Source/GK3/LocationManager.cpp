@@ -1,19 +1,22 @@
 #include "LocationManager.h"
 
+#include "AssetManager.h"
 #include "GameProgress.h"
 #include "GK3UI.h"
 #include "IniParser.h"
 #include "Localizer.h"
-#include "Services.h"
+#include "ReportManager.h"
+#include "SceneManager.h"
+#include "SheepManager.h"
 #include "StringUtil.h"
 #include "TextAsset.h"
 #include "Timeblock.h"
 
-TYPE_DEF_BASE(LocationManager);
+LocationManager gLocationManager;
 
-LocationManager::LocationManager()
+void LocationManager::Init()
 {
-	TextAsset* textFile = Services::GetAssets()->LoadText("Locations.txt");
+	TextAsset* textFile = gAssetManager.LoadText("Locations.txt");
 	
 	// Parse as INI file.
 	IniParser parser(textFile->GetText(), textFile->GetTextLength());
@@ -143,10 +146,22 @@ LocationManager::LocationManager()
     for(auto& name : allBsp)
     {
         std::cout << "Loading " << name << " BSP..." << std::endl;
-        Services::GetAssets()->LoadBSP(name);
+        gAssetManager.LoadBSP(name);
         std::cout << "Done loading " << name << " BSP." << std::endl;
     }
     */
+}
+
+void LocationManager::Update()
+{
+    // If a location change is pending, make it happen.
+    if(!mChangeLocationTo.empty())
+    {
+        ChangeLocationInternal(mChangeLocationTo, mChangeLocationCallback);
+
+        mChangeLocationTo.clear();
+        mChangeLocationCallback = nullptr;
+    }
 }
 
 bool LocationManager::IsValidLocation(const std::string& locationCode) const
@@ -157,7 +172,7 @@ bool LocationManager::IsValidLocation(const std::string& locationCode) const
 	bool isValid = mLocCodeShortToLocCodeLong.find(locationCode) != mLocCodeShortToLocCodeLong.end();
 	if(!isValid)
 	{
-		Services::GetReports()->Log("Error", "Error: '" + locationCode + "' is not a valid location name. Call DumpLocations() to see valid locations.");
+		gReportManager.Log("Error", "Error: '" + locationCode + "' is not a valid location name. Call DumpLocations() to see valid locations.");
 	}
 	return isValid;
 }
@@ -169,55 +184,10 @@ void LocationManager::DumpLocations() const
 
 void LocationManager::ChangeLocation(const std::string& location, std::function<void()> callback)
 {
-    // Show scene transitioner.
-    gGK3UI.ShowSceneTransitioner();
-
-    // Set new location.
-    // This is important to do BEFORE checking for timeblock completion, as that logic looks for locations sometimes.
-    bool sameLocation = StringUtil::EqualsIgnoreCase(mLocation, location);
-    SetLocation(location);
-
-    //HACK: Don't check timeblock completion if following someone on driving screen.
-    //HACK: Fixes premature timeblock completion in 1102P if last action performed is follow.
-    if(gGK3UI.FollowingOnDrivingScreen())
-    {
-        // Change scene and done.
-        GEngine::Instance()->LoadScene(location, [callback](){
-            gGK3UI.HideSceneTransitioner();
-            if(callback != nullptr) { callback(); }
-        });
-        return;
-    }
-
-    // Check for timeblock completion.
-    Timeblock currentTimeblock = Services::Get<GameProgress>()->GetTimeblock();
-    Services::GetSheep()->Execute(Services::GetAssets()->LoadSheep("Timeblocks"), "CheckTimeblockComplete$", [sameLocation, location, callback, currentTimeblock]() {
-
-        // See whether a timeblock change occurred.
-        // If so, we should early out - the timeblock change logic handles any location and time change.
-        Timeblock newTimeblock = Services::Get<GameProgress>()->GetTimeblock();
-        if(newTimeblock != currentTimeblock)
-        {
-            gGK3UI.HideSceneTransitioner();
-            if(callback != nullptr) { callback(); }
-            return;
-        }
-
-        // No need to change if we're already there.
-        if(sameLocation)
-        {
-            gGK3UI.HideSceneTransitioner();
-            if(callback != nullptr) { callback(); }
-        }
-        else
-        {
-            // Otherwise, we can move ahead with changing the scene.
-            GEngine::Instance()->LoadScene(location, [callback](){
-                gGK3UI.HideSceneTransitioner();
-                if(callback != nullptr) { callback(); }
-            });
-        }
-    });
+    // Record that we want to change location. This change request will be processed on next Update call.
+    // We don't just change location right away b/c this function might be called at any time, but we want location change to happen at a known time in code.
+    mChangeLocationTo = location;
+    mChangeLocationCallback = callback;
 }
 
 void LocationManager::SetLocation(const std::string& location)
@@ -237,7 +207,7 @@ std::string LocationManager::GetLocationDisplayName() const
 std::string LocationManager::GetLocationDisplayName(const std::string& location) const
 {
     // Keys for timeblocks are in form "loc_r25".
-    return Services::Get<Localizer>()->GetText("loc_" + location);
+    return gLocalizer.GetText("loc_" + location);
 }
 
 int LocationManager::GetLocationCountAcrossAllTimeblocks(const std::string& actorName, const std::string& location)
@@ -247,12 +217,12 @@ int LocationManager::GetLocationCountAcrossAllTimeblocks(const std::string& acto
 
 int LocationManager::GetCurrentLocationCountForCurrentTimeblock(const std::string& actorName) const
 {
-	return GetLocationCount(actorName, mLocation, Services::Get<GameProgress>()->GetTimeblock());
+	return GetLocationCount(actorName, mLocation, gGameProgress.GetTimeblock());
 }
 
 int LocationManager::GetLocationCountForCurrentTimeblock(const std::string& actorName, const std::string& location) const
 {
-	return GetLocationCount(actorName, location, Services::Get<GameProgress>()->GetTimeblock());
+	return GetLocationCount(actorName, location, gGameProgress.GetTimeblock());
 }
 
 int LocationManager::GetLocationCount(const std::string& actorName, const std::string& location, const Timeblock& timeblock) const
@@ -273,12 +243,12 @@ int LocationManager::GetLocationCount(const std::string& actorName, const std::s
 
 void LocationManager::IncCurrentLocationCountForCurrentTimeblock(const std::string& actorName)
 {
-	IncLocationCount(actorName, mLocation, Services::Get<GameProgress>()->GetTimeblock());
+	IncLocationCount(actorName, mLocation, gGameProgress.GetTimeblock());
 }
 
 void LocationManager::IncLocationCountForCurrentTimeblock(const std::string &actorName, const std::string &location)
 {
-	IncLocationCount(actorName, mLocation, Services::Get<GameProgress>()->GetTimeblock());
+	IncLocationCount(actorName, mLocation, gGameProgress.GetTimeblock());
 }
 
 void LocationManager::IncLocationCount(const std::string& actorName, const std::string& location, const Timeblock& timeblock)
@@ -298,7 +268,7 @@ void LocationManager::IncLocationCount(const std::string& actorName, const std::
 void LocationManager::SetLocationCountForCurrentTimeblock(const std::string& actorName, const std::string& location, int count)
 {
 	// Get current timeblock as string.
-	std::string timeblock = Services::Get<GameProgress>()->GetTimeblock().ToString();
+	std::string timeblock = gGameProgress.GetTimeblock().ToString();
 
 	// Increment timeblock-specific location count. This version should NOT change the global one!
 	mActorLocationTimeblockCounts[actorName + location + timeblock] = count;
@@ -349,4 +319,55 @@ bool LocationManager::IsActorOffstage(const std::string& actorName) const
 {
 	auto it = mActorLocations.find(actorName);
 	return it == mActorLocations.end();
+}
+
+void LocationManager::ChangeLocationInternal(const std::string& location, std::function<void()> callback)
+{
+    // Show scene transitioner.
+    gGK3UI.ShowSceneTransitioner();
+
+    // Set new location.
+    // This is important to do BEFORE checking for timeblock completion, as that logic looks for locations sometimes.
+    bool sameLocation = StringUtil::EqualsIgnoreCase(mLocation, location);
+    SetLocation(location);
+
+    //HACK: Don't check timeblock completion if following someone on driving screen.
+    //HACK: Fixes premature timeblock completion in 102P if last action performed is follow.
+    if(gGK3UI.FollowingOnDrivingScreen())
+    {
+        // Change scene and done.
+        gSceneManager.LoadScene(mChangeLocationTo, [callback](){
+            gGK3UI.HideSceneTransitioner();
+            if(callback != nullptr) { callback(); }
+        });
+        return;
+    }
+
+    // Check for timeblock completion.
+    gSheepManager.Execute(gAssetManager.LoadSheep("Timeblocks"), "CheckTimeblockComplete$", [location, callback, sameLocation](){
+
+        // See whether a timeblock change is occurring.
+        // If so, we should early out - the timeblock change logic handles any location and time change.
+        if(gGameProgress.IsChangingTimeblock())
+        {
+            gGK3UI.HideSceneTransitioner();
+            if(callback != nullptr) { callback(); }
+            return;
+        }
+
+        // No need to change if we're already there.
+        if(sameLocation)
+        {
+            gGK3UI.HideSceneTransitioner();
+            if(callback != nullptr) { callback(); }
+        }
+        else
+        {
+            // Otherwise, we can move ahead with changing the scene.
+            gSceneManager.LoadScene(location, [callback](){
+                gGK3UI.HideSceneTransitioner();
+                if(callback != nullptr) { callback(); }
+            });
+        }
+    });
 }

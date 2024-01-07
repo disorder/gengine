@@ -3,16 +3,16 @@
 #include "Animation.h"
 #include "Animator.h"
 #include "GasPlayer.h"
-#include "GEngine.h"
 #include "GKActor.h"
 #include "LocationManager.h"
-#include "Scene.h"
+#include "Random.h"
+#include "SceneManager.h"
 
 float AnimGasNode::Execute(GasPlayer* player)
 {
     // Do random check. If it fails, we don't execute.
     // But note execution count is still incremented!
-    int randomCheck = rand() % 100 + 1;
+    int randomCheck = Random::Range(1, 101);
     if(randomCheck > random) { return 0; }
 
     // Must have a valid animation, and GasPlayer, and Animator.
@@ -42,16 +42,15 @@ OneOfGasNode::~OneOfGasNode()
 
 float OneOfGasNode::Execute(GasPlayer* player)
 {
-    if(animNodes.size() == 0) { return 0.0f; }
-    int randomIndex = rand() % animNodes.size();
-    return animNodes[randomIndex]->Execute(player);
+    if(animNodes.empty()) { return 0.0f; }
+    return animNodes[Random::Range(0, animNodes.size())]->Execute(player);
 }
 
 float WaitGasNode::Execute(GasPlayer* player)
 {
     // Do random check. If it fails, we don't execute.
     // But note execution count is still incremented!
-    int randomCheck = rand() % 100 + 1;
+    int randomCheck = Random::Range(1, 101);
     if(randomCheck > random) { return 0.0f; }
 
     // We will execute this node. Decide wait time based on min/max.
@@ -60,7 +59,7 @@ float WaitGasNode::Execute(GasPlayer* player)
     if(maxWaitTimeSeconds != 0 && minWaitTimeSeconds > maxWaitTimeSeconds) { return minWaitTimeSeconds; }
 
     // Normal case - random between min and max.
-    return (rand() % maxWaitTimeSeconds + minWaitTimeSeconds);
+    return Random::Range(minWaitTimeSeconds, maxWaitTimeSeconds);
 }
 
 float GotoGasNode::Execute(GasPlayer* player)
@@ -126,7 +125,7 @@ float WalkToGasNode::Execute(GasPlayer* player)
     Heading walkToHeading = Heading::None;
     if(!positionName.empty())
     {
-        const ScenePosition* scenePosition = GEngine::Instance()->GetScene()->GetPosition(positionName);
+        const ScenePosition* scenePosition = gSceneManager.GetScene()->GetPosition(positionName);
         if(scenePosition != nullptr)
         {
             walkToPos = scenePosition->position;
@@ -150,12 +149,12 @@ float ChooseWalkGasNode::Execute(GasPlayer* player)
     if(actor == nullptr) { return 0; }
 
     // Randomly choose a position from the list.
-    int randomIndex = rand() % positionNames.size();
-    int counter = 0;
+    int randomIndex = Random::Range(0, positionNames.size());
+    size_t counter = 0;
     const ScenePosition* scenePosition = nullptr;
     while(counter < positionNames.size())
     {
-        const ScenePosition* candidate = GEngine::Instance()->GetScene()->GetPosition(positionNames[randomIndex]);
+        const ScenePosition* candidate = gSceneManager.GetScene()->GetPosition(positionNames[randomIndex]);
         if(candidate != nullptr && !actor->GetWalker()->AtPosition(candidate->position))
         {
             // Found a position that works!
@@ -166,7 +165,7 @@ float ChooseWalkGasNode::Execute(GasPlayer* player)
         // Either candidate was null (unlikely) or actor's already at that position (more likely).
         // Either way, we can't use the randomly selected position! Just increment forward until we find one that works...
         randomIndex = (randomIndex + 1) % positionNames.size();
-        counter++;
+        ++counter;
     }
 
     // At this point, if we don't have a position to use, we have to just skip this node.
@@ -174,7 +173,7 @@ float ChooseWalkGasNode::Execute(GasPlayer* player)
     if(scenePosition == nullptr) { return 0; }
     
     // Start walk to.
-    actor->WalkTo(scenePosition->position, scenePosition->heading, std::bind(&GasPlayer::NextNode, player));
+    actor->WalkToGas(scenePosition->position, scenePosition->heading, std::bind(&GasPlayer::NextNode, player));
 
     // Return -1 to disable timer system and just wait for callback.
     return -1.0f;
@@ -183,7 +182,7 @@ float ChooseWalkGasNode::Execute(GasPlayer* player)
 float UseIPosGasNode::Execute(GasPlayer* player)
 {
     // We'll just assume the position name provided is valid - or else null is set.
-    player->SetInterruptPosition(GEngine::Instance()->GetScene()->GetPosition(positionName));
+    player->SetInterruptPosition(gSceneManager.GetScene()->GetPosition(positionName));
     return 0.0f;
 }
 
@@ -199,7 +198,7 @@ float UseCleanupGasNode::Execute(GasPlayer* player)
 float UseTalkIPosGasNode::Execute(GasPlayer* player)
 {
     // We'll just assume the position name provided is valid - or else null is set.
-    player->SetTalkInterruptPosition(GEngine::Instance()->GetScene()->GetPosition(positionName));
+    player->SetTalkInterruptPosition(gSceneManager.GetScene()->GetPosition(positionName));
     return 0.0f;
 }
 
@@ -227,7 +226,7 @@ float WhenNearGasNode::Execute(GasPlayer* player)
 bool WhenNearGasNode::CheckCondition(GasPlayer* player)
 {
     // Get actor associated with first noun. Fail out if not found.
-    Actor* objectA = GEngine::Instance()->GetScene()->GetSceneObjectByNoun(noun);
+    Actor* objectA = gSceneManager.GetScene()->GetSceneObjectByNoun(noun);
     if(objectA == nullptr) { return false; }
 
     // Get other actor. If "otherNoun" is not empty, the other actor is obtained same way.
@@ -235,7 +234,7 @@ bool WhenNearGasNode::CheckCondition(GasPlayer* player)
     Actor* objectB = nullptr;
     if(!otherNoun.empty())
     {
-        objectB = GEngine::Instance()->GetScene()->GetSceneObjectByNoun(otherNoun);
+        objectB = gSceneManager.GetScene()->GetSceneObjectByNoun(otherNoun);
     }
     else
     {
@@ -271,13 +270,13 @@ float DialogueGasNode::Execute(GasPlayer* player)
     params.animation = yakAnimation;
     params.finishCallback = std::bind(&GasPlayer::NextNode, player);
     params.isYak = true;
-    GEngine::Instance()->GetScene()->GetAnimator()->Start(params);
+    gSceneManager.GetScene()->GetAnimator()->Start(params);
     return -1.0f;
 }
 
 float LocationGasNode::Execute(GasPlayer* player)
 {
     GKObject* owner = static_cast<GKObject*>(player->GetOwner());
-    Services::Get<LocationManager>()->SetActorLocation(owner->GetNoun(), location);
+    gLocationManager.SetActorLocation(owner->GetNoun(), location);
     return 0.0f;
 }

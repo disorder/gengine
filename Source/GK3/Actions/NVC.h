@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "SheepScript.h"
 #include "StringUtil.h"
 
 class GKActor;
@@ -71,7 +72,9 @@ struct Action
 class NVC : public Asset
 {
 public:
-    NVC(const std::string& name, char* data, int dataLength);
+    NVC(const std::string& name, AssetScope scope) : Asset(name, scope) { }
+
+    void Load(uint8_t* data, uint32_t dataLength);
 	
 	const std::vector<Action*>& GetActions() const { return mActions; }
 	const std::vector<Action>& GetActions(const std::string& noun) const;
@@ -82,10 +85,6 @@ public:
 	const std::string_map_ci<SheepScriptAndText>& GetCases() const { return mCaseLogic; }
 	
 private:
-	// If attempting to get actions for a noun that doesn't exist,
-	// We just return a reference to this empty vector.
-	static std::vector<Action> mEmptyActions;
-
     // A list of all actions contained in this NVC (not sorted in any particular way).
     // Pointers into the noun-to-action map.
 	std::vector<Action*> mActions;
@@ -96,5 +95,5 @@ private:
     // Mapping of case name to sheep script to eval.
     std::string_map_ci<SheepScriptAndText> mCaseLogic;
 	
-	void ParseFromData(char* data, int dataLength);
+	void ParseFromData(uint8_t* data, uint32_t dataLength);
 };

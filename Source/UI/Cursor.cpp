@@ -2,15 +2,23 @@
 
 #include <SDL.h>
 
+#include "AssetManager.h"
 #include "IniParser.h"
-#include "Services.h"
 #include "StringUtil.h"
 #include "Texture.h"
 
-Cursor::Cursor(const std::string& name, char* data, int dataLength) : Asset(name)
+Cursor::~Cursor()
+{
+    for(auto& frame : mCursorFrames)
+    {
+        SDL_FreeCursor(frame);
+    }
+}
+
+void Cursor::Load(uint8_t* data, uint32_t dataLength)
 {
     // Texture used is always the same as the name of the cursor.
-    Texture* texture = Services::GetAssets()->LoadTexture(GetNameNoExtension() + ".BMP");
+    Texture* texture = gAssetManager.LoadTexture(GetNameNoExtension(), GetScope());
     if(texture == nullptr)
     {
         printf("Create cursor %s failed: couldn't load texture.\n", mName.c_str());
@@ -48,7 +56,7 @@ Cursor::Cursor(const std::string& name, char* data, int dataLength) : Asset(name
             }
             else if(StringUtil::EqualsIgnoreCase(keyValue.key, "frame rate"))
             {
-                mFramesPerSecond = keyValue.GetValueAsInt();
+                mFramesPerSecond = static_cast<float>(keyValue.GetValueAsInt());
             }
             else if(StringUtil::EqualsIgnoreCase(keyValue.key, "allow fading"))
             {
@@ -130,14 +138,6 @@ Cursor::Cursor(const std::string& name, char* data, int dataLength) : Asset(name
             printf("Create cursor %s failed: couldn't create cursor frame %i (%s).\n", mName.c_str(), i, SDL_GetError());
         }
         mCursorFrames.push_back(cursor);
-    }
-}
-
-Cursor::~Cursor()
-{
-    for(auto& frame : mCursorFrames)
-    {
-        SDL_FreeCursor(frame);
     }
 }
 

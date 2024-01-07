@@ -20,8 +20,10 @@ struct VertexAnimationPose
     int frameNumber = 0;
     VertexAnimationPose* next = nullptr;
 
+    virtual ~VertexAnimationPose() { } 
+
     VertexAnimationPose* GetForFrame(int frame);
-    void GetForTime(float time, int framesPerSecond, VertexAnimationPose*& current, VertexAnimationPose*& next, float& t);
+    void GetForTime(float time, int framesPerSecond, VertexAnimationPose*& outCurrent, VertexAnimationPose*& outNext, float& outT);
 };
 
 struct VertexAnimationVertexPose : public VertexAnimationPose
@@ -37,8 +39,11 @@ struct VertexAnimationTransformPose : public VertexAnimationPose
 class VertexAnimation : public Asset
 {
 public:
-    VertexAnimation(const std::string& name, char* data, int dataLength);
-    
+    VertexAnimation(const std::string& name, AssetScope scope) : Asset(name, scope) { }
+    ~VertexAnimation();
+
+    void Load(uint8_t* data, uint32_t dataLength);
+
     // Queries transform (position, rotation, scale) for a mesh at a frame/time.
     VertexAnimationTransformPose SampleTransformPose(int frame, int meshIndex);
     VertexAnimationTransformPose SampleTransformPose(float time, int framesPerSecond, int meshIndex);
@@ -73,7 +78,7 @@ private:
 	// Subsequent poses for the mesh are stored in the "next" of the first pose.
     std::vector<VertexAnimationTransformPose*> mTransformPoses;
     
-    void ParseFromData(char* data, int dataLength);
+    void ParseFromData(uint8_t* data, uint32_t dataLength);
     
     float DecompressFloatFromByte(unsigned char val);
     float DecompressFloatFromUShort(unsigned short val);

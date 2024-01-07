@@ -4,20 +4,22 @@
 #include <cstring>
 
 #include "ActionBar.h"
+#include "AssetManager.h"
 #include "DialogueManager.h"
 #include "GameProgress.h"
+#include "GameCamera.h"
+#include "GEngine.h"
 #include "GKActor.h"
 #include "GK3UI.h"
 #include "IniParser.h"
 #include "Profiler.h"
-#include "Scene.h"
-#include "Services.h"
+#include "ReportManager.h"
+#include "SceneManager.h"
+#include "SheepManager.h"
 #include "SheepScript.h"
 #include "StringUtil.h"
 #include "Timeblock.h"
 #include "VerbManager.h"
-
-TYPE_DEF_BASE(ActionManager);
 
 namespace
 {
@@ -29,6 +31,8 @@ namespace
         }
     }
 }
+
+ActionManager gActionManager;
 
 ActionManager::~ActionManager()
 {
@@ -49,11 +53,11 @@ void ActionManager::Init()
 void ActionManager::AddActionSet(const std::string& assetName)
 {
     // Read in the asset.
-	NVC* actionSet = Services::GetAssets()->LoadNVC(assetName);
+	NVC* actionSet = gAssetManager.LoadNVC(assetName, AssetScope::Scene);
     if(actionSet == nullptr) { return; }
 
     // Log that we're parsing this NVC.
-	Services::GetReports()->Log("Generic", StringUtil::Format("Reading NVC file: %s", assetName.c_str()));
+	gReportManager.Log("Generic", StringUtil::Format("Reading NVC file: %s", assetName.c_str()));
 
     // Populate actions map.
     const std::vector<Action*>& actions = actionSet->GetActions();
@@ -142,7 +146,7 @@ bool ActionManager::ExecuteAction(const std::string& noun, const std::string& ve
     return action != nullptr;
 }
 
-void ActionManager::ExecuteAction(const Action* action, std::function<void(const Action*)> finishCallback)
+void ActionManager::ExecuteAction(const Action* action, std::function<void(const Action*)> finishCallback, bool log)
 {
     // Early out if action is null.
 	if(action == nullptr)
@@ -157,33 +161,34 @@ void ActionManager::ExecuteAction(const Action* action, std::function<void(const
 	// We should only execute one action at a time.
 	if(mCurrentAction != nullptr)
 	{
-        Services::GetReports()->Log("Actions", StringUtil::Format("Skipping NVC %s - another action is in progress", action->ToString().c_str()));
+        gReportManager.Log("Actions", StringUtil::Format("Skipping NVC %s - another action is in progress", action->ToString().c_str()));
 		return;
 	}
 	mCurrentAction = action;
     mCurrentActionFinishCallback = finishCallback;
 	
 	// Log it!
-	Services::GetReports()->Log("Actions", StringUtil::Format("Playing NVC %s", action->ToString().c_str()));
+    // This is conditional b/c scene actions are actually logged earlier (before the approach finishes).
+    if(log)
+    {
+        gReportManager.Log("Actions", StringUtil::Format("Playing NVC %s", action->ToString().c_str()));
+    }
 	
 	// Increment action ID.
 	++mActionId;
+    
+    // Remember current camera FOV.
+    gSceneManager.GetScene()->GetCamera()->SaveFov();
 
     // Save frame this action was started on.
     mCurrentActionStartFrame = GEngine::Instance()->GetFrameNumber();
-	
-	// If this is a topic, automatically increment topic counts.
-	if(Services::Get<VerbManager>()->IsTopic(action->verb))
-	{
-		Services::Get<GameProgress>()->IncTopicCount(action->noun, action->verb);
-	}
 	
 	// If no script is associated with the action, that might be an error...
 	// But for now, we'll just treat it as action is immediately over.
 	if(action->script.script != nullptr)
 	{
 		// Execute action in Sheep system, call finished function when done.
-		Services::GetSheep()->Execute(action->script.script, std::bind(&ActionManager::OnActionExecuteFinished, this));
+		gSheepManager.Execute(action->script.script, std::bind(&ActionManager::OnActionExecuteFinished, this), "SceneLayer");
 	}
 	else
 	{
@@ -214,7 +219,7 @@ void ActionManager::ExecuteCustomAction(const std::string& noun, const std::stri
         tempAction.verb = verb;
         tempAction.caseLabel = caseLabel;
         tempAction.script.text = sheepScriptText;
-        Services::GetReports()->Log("Actions", StringUtil::Format("Skipping NVC %s - another action is in progress", tempAction.ToString().c_str()));
+        gReportManager.Log("Actions", StringUtil::Format("Skipping NVC %s - another action is in progress", tempAction.ToString().c_str()));
         return;
     }
 
@@ -232,7 +237,7 @@ void ActionManager::ExecuteCustomAction(const std::string& noun, const std::stri
 
     // Compile script.
     mCustomAction.script.text = sheepScriptText;
-    mCustomAction.script.script = Services::GetSheep()->Compile("ActionSheep", "{ " + sheepScriptText + " }");
+    mCustomAction.script.script = gSheepManager.Compile("ActionSheep", "{ " + sheepScriptText + " }");
 
     // Use normal action flow from here.
     ExecuteAction(&mCustomAction, finishCallback);
@@ -266,7 +271,7 @@ void ActionManager::SkipCurrentAction()
 
     // Stop any VO or SFX that started playing on or after the start of the action.
     // Assuming that all VO/SFX playing were DUE TO the current action...may not be 100% true. If it's a problem, may have to "tag" sounds somehow.
-    Services::GetAudio()->StopOnOrAfterFrame(mCurrentActionStartFrame);
+    gAudioManager.StopOnOrAfterFrame(mCurrentActionStartFrame);
 
     // The idea here is that the game's execution should immediately "skip" to the end of the current action.
     // The most "global" and unintrusive way I can think to do that is...just run update in a loop until the action is done!
@@ -278,11 +283,11 @@ void ActionManager::SkipCurrentAction()
         GEngine::Instance()->ForceUpdate();
         ++skipCount;
     }
-    Services::GetReports()->Log("Console", StringUtil::Format("skipped %i times, skip duration: %i msec", skipCount, static_cast<int>(stopwatch.GetMilliseconds())));
+    gReportManager.Log("Console", StringUtil::Format("skipped %i times, skip duration: %i msec", skipCount, static_cast<int>(stopwatch.GetMilliseconds())));
 
     // Do this again AFTER skipping to stop any audio that may have been triggered during the forced updates.
     //TODO: The audio system, or Sheep system, could mayyyybe not play audio during skips. But that might be quite intrusive.
-    Services::GetAudio()->StopOnOrAfterFrame(mCurrentActionStartFrame);
+    gAudioManager.StopOnOrAfterFrame(mCurrentActionStartFrame);
 
     // Also hide any subtitles, since we skipped everything.
     gGK3UI.HideAllCaptions();
@@ -300,7 +305,7 @@ const Action* ActionManager::GetAction(const std::string& noun, const std::strin
 	
 	// If the verb is an inventory item, handle ANY_OBJECT/ANY_INV_ITEM wildcards for noun/verb.
     Action* action = nullptr;
-	bool verbIsInventoryItem = Services::Get<VerbManager>()->IsInventoryItem(verb);
+	bool verbIsInventoryItem = gVerbManager.IsInventoryItem(verb);
 	if(verbIsInventoryItem)
 	{
         action = GetHighestPriorityAction("ANY_OBJECT", "ANY_INV_ITEM", VerbType::Normal);
@@ -372,6 +377,35 @@ std::vector<const Action*> ActionManager::GetActions(const std::string& noun, Ve
     {
         verbToActionSpecific.clear();
         AddActionsToMap("GRACE_N_MOSE", verbType, verbToActionSpecific);
+        for(auto& entry : verbToActionSpecific)
+        {
+            verbToAction[entry.first] = entry.second;
+        }
+    }
+
+    // Also a boat load of exceptions at Day 2, 2PM, Devil's Armchair...
+    if(StringUtil::EqualsIgnoreCase(noun, "DEAD_CLOTHES_HE1") || StringUtil::EqualsIgnoreCase(noun, "DEAD_CLOTHES_HE2"))
+    {
+        verbToActionSpecific.clear();
+        AddActionsToMap("DEAD_CLOTHES", verbType, verbToActionSpecific);
+        for(auto& entry : verbToActionSpecific)
+        {
+            verbToAction[entry.first] = entry.second;
+        }
+    }
+    if(StringUtil::EqualsIgnoreCase(noun, "DEAD_THROAT_HE1") || StringUtil::EqualsIgnoreCase(noun, "DEAD_THROAT_HE2"))
+    {
+        verbToActionSpecific.clear();
+        AddActionsToMap("DEAD_THROATS", verbType, verbToActionSpecific);
+        for(auto& entry : verbToActionSpecific)
+        {
+            verbToAction[entry.first] = entry.second;
+        }
+    }
+    if(StringUtil::EqualsIgnoreCase(noun, "DEAD_FACES_HE1") || StringUtil::EqualsIgnoreCase(noun, "DEAD_FACES_HE2"))
+    {
+        verbToActionSpecific.clear();
+        AddActionsToMap("DEAD_FACES", verbType, verbToActionSpecific);
         for(auto& entry : verbToActionSpecific)
         {
             verbToAction[entry.first] = entry.second;
@@ -516,13 +550,12 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
 	auto it = mCaseLogic.find(caseLabel);
 	if(it != mCaseLogic.end())
 	{
-        // Annoying problem: for topics, if the topic count is not EXPLICITLY checked as part of the logic, it appears to be IMPLICITLY checked.
-        // This means we need to check topic count and force-fail the case if "GetTopicCount(NOUN, VERB)" is not explicitly in the case logic.
-        if(verbType == VerbType::Topic && Services::Get<GameProgress>()->GetTopicCount(noun, verb) != 0)
+        // For topics, the case logic indicates when a topic should be available, but it DOES NOT indicate when it should no longer be available!
+        // As a general rule, topics should only be discussable once (when the case is met), and then they do not appear again after being discussed.
+        if(verbType == VerbType::Topic)
         {
-            // BUT! A caveat! Some verbs specifically are exempt from this logic.
-            // Frustrating but...the logic in the data files looks identical, but they behave differently.
-            // Does not appear to be defined in a data-driven way.
+            // However, there are exceptions...these topics are allowed to appear multiple times magically.
+            //TODO: Unsure how the original game differentiates these...might be related to cancel button presence?
             static std::string_set_ci sIgnoreImplicitTopicCount = {
                 "T_HANDSHAKE_A",
                 "T_HANDSHAKE_B",
@@ -532,41 +565,19 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
             };
             if(sIgnoreImplicitTopicCount.find(verb) == sIgnoreImplicitTopicCount.end())
             {
-                // So, if we get here, it means this topic has already been discussed before, and it's not on the above ignore list.
-                
-                // Typically, this means this case is NOT met (IMPLICIT count check means we already discussed this topic).
-                // HOWEVER, if the case logic EXPLICITLY checks topic count, we need to run the case logic normally.
-                bool explicitlyChecksTopicCount = false;
-                size_t pos = 0;
-                while(pos != std::string::npos)
+                // If we've already discussed this topic, the noun/verb/case combo will exist in this set.
+                // If already present, we should NOT show this topic.
+                auto it1 = mPlayedTopics.find(noun);
+                if(it1 != mPlayedTopics.end())
                 {
-                    // Find GetTopicCount instance.
-                    pos = StringUtil::FindIgnoreCase(it->second.text, "GetTopicCount", pos);
-                    if(pos == std::string::npos) { break; }
-
-                    // Get open/close parentheses for GetTopicCount.
-                    size_t openParen = it->second.text.find('(', pos);
-                    size_t closeParen = it->second.text.find(')', openParen);
-
-                    // See if our noun & verb occur after the open parentesis and before the close parenthesis.
-                    // If so, it would appear this case logic DOES explicitly check topic count.
-                    size_t nounPos = StringUtil::FindIgnoreCase(it->second.text, noun, openParen);
-                    size_t verbPos = StringUtil::FindIgnoreCase(it->second.text, verb, openParen);
-                    if(nounPos < closeParen && verbPos > nounPos && verbPos < closeParen)
+                    auto it2 = it1->second.find(verb);
+                    if(it2 != it1->second.end())
                     {
-                        explicitlyChecksTopicCount = true;
-                        break;
+                        if(it2->second.count(caseLabel) > 0)
+                        {
+                            return false;
+                        }
                     }
-
-                    // We need to loop in case the condition logic contains multiple GetTopicCount checks.
-                    pos = closeParen;
-                }
-
-                // If we don't explicitly check the topic count AND this topic has been discussed before...
-                // ...assume that we can't discuss it again, and so return false! (whew)
-                if(!explicitlyChecksTopicCount)
-                {
-                    return false;
                 }
             }
         }
@@ -578,7 +589,7 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
 		int v = mVerbToEnum.at(verb);
 		
 		// Evaluate our condition logic with our n$ and v$ values.
-		return Services::GetSheep()->Evaluate(it->second.script, n, v);
+		return gSheepManager.Evaluate(it->second.script, n, v);
 	}
 	
 	// Check global case conditions.
@@ -590,16 +601,16 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
         if(verbType == VerbType::Topic)
         {
             int topicCount = 0;
-            auto it = mActions.find(noun);
-            if(it != mActions.end())
+            auto it2 = mActions.find(noun);
+            if(it2 != mActions.end())
             {
-                auto it2 = it->second.find(verb);
-                if(it2 != it->second.end())
+                auto it3 = it2->second.find(verb);
+                if(it3 != it2->second.end())
                 {
-                    topicCount = it2->second.size();
+                    topicCount = it3->second.size();
                 }
             }
-            return Services::Get<GameProgress>()->GetTopicCount(noun, verb) == (topicCount - 1);
+            return gGameProgress.GetTopicCount(noun, verb) == (topicCount - 1);
         }
 
 		// "ALL" is always met!
@@ -608,27 +619,23 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "GABE_ALL"))
 	{
 		// Condition is met if Ego is Gabriel.
-		Scene* scene = GEngine::Instance()->GetScene();
-		GKActor* ego = scene != nullptr ? scene->GetEgo() : nullptr;
-		return ego != nullptr && StringUtil::EqualsIgnoreCase(ego->GetNoun(), "Gabriel");
+        return StringUtil::EqualsIgnoreCase(Scene::GetEgoName(), "Gabriel");
 	}
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "GRACE_ALL"))
 	{
 		// Condition is met if Ego is Grace.
-		Scene* scene = GEngine::Instance()->GetScene();
-		GKActor* ego = scene != nullptr ? scene->GetEgo() : nullptr;
-		return ego != nullptr && StringUtil::EqualsIgnoreCase(ego->GetNoun(), "Grace");
+        return StringUtil::EqualsIgnoreCase(Scene::GetEgoName(), "Grace");
 	}
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "1ST_TIME"))
 	{
 		// Condition is met if this is the first time we've executed this action (noun/verb combo).
 		if(verbType == VerbType::Topic)
 		{
-			return Services::Get<GameProgress>()->GetTopicCount(noun, verb) == 0;
+			return gGameProgress.GetTopicCount(noun, verb) == 0;
 		}
 		else
 		{
-			return Services::Get<GameProgress>()->GetNounVerbCount(noun, verb) == 0;
+			return gGameProgress.GetNounVerbCount(noun, verb) == 0;
 		}
 	}
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "2CD_TIME"))
@@ -637,11 +644,11 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
         // Condition is met if this is the 2nd time we did the action.
 		if(verbType == VerbType::Topic)
 		{
-			return Services::Get<GameProgress>()->GetTopicCount(noun, verb) == 1;
+			return gGameProgress.GetTopicCount(noun, verb) == 1;
 		}
 		else
 		{
-			return Services::Get<GameProgress>()->GetNounVerbCount(noun, verb) == 1;
+			return gGameProgress.GetNounVerbCount(noun, verb) == 1;
 		}
 	}
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "3RD_TIME"))
@@ -649,11 +656,11 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
 		// And again for good measure. True if this is the 3rd time we did the action.
 		if(verbType == VerbType::Topic)
 		{
-			return Services::Get<GameProgress>()->GetTopicCount(noun, verb) == 2;
+			return gGameProgress.GetTopicCount(noun, verb) == 2;
 		}
 		else
 		{
-			return Services::Get<GameProgress>()->GetNounVerbCount(noun, verb) == 2;
+			return gGameProgress.GetNounVerbCount(noun, verb) == 2;
 		}
 	}
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "OTR_TIME"))
@@ -661,11 +668,11 @@ bool ActionManager::IsCaseMet(const std::string& noun, const std::string& verb, 
 		// Condition is met if this IS NOT the first time we've executed this action (noun/verb combo).
 		if(verbType == VerbType::Topic)
 		{
-			return Services::Get<GameProgress>()->GetTopicCount(noun, verb) > 0;
+			return gGameProgress.GetTopicCount(noun, verb) > 0;
 		}
 		else
 		{
-			return Services::Get<GameProgress>()->GetNounVerbCount(noun, verb) > 0;
+			return gGameProgress.GetNounVerbCount(noun, verb) > 0;
 		}
 	}
 	else if(StringUtil::EqualsIgnoreCase(caseLabel, "DIALOGUE_TOPICS_LEFT"))
@@ -826,13 +833,13 @@ void ActionManager::AddActionsToMap(const std::string& noun, VerbType verbType, 
             switch(verbType)
             {
             case VerbType::Normal:
-                validType = Services::Get<VerbManager>()->IsVerb(verbEntry.first);
+                validType = gVerbManager.IsVerb(verbEntry.first);
                 break;
             case VerbType::Inventory:
-                validType = Services::Get<VerbManager>()->IsInventoryItem(verbEntry.first);
+                validType = gVerbManager.IsInventoryItem(verbEntry.first);
                 break;
             case VerbType::Topic:
-                validType = Services::Get<VerbManager>()->IsTopic(verbEntry.first);
+                validType = gVerbManager.IsTopic(verbEntry.first);
                 break;
             }
             if(!validType) { continue; }
@@ -866,7 +873,20 @@ void ActionManager::OnActionExecuteFinished()
     // Do this BEFORE callback and topic bar checks, as those may want to start an action themselves.
     mLastAction = mCurrentAction;
     mCurrentAction = nullptr;
+    
+    // Restore current camera FOV.
+    gSceneManager.GetScene()->GetCamera()->RestoreFov();
 
+    // If this is a topic, automatically increment topic counts.
+    if(gVerbManager.IsTopic(mLastAction->verb))
+    {
+        // Increment topic count automatically.
+        gGameProgress.IncTopicCount(mLastAction->noun, mLastAction->verb);
+
+        // Make a record that this topic action was performed.
+        mPlayedTopics[mLastAction->noun][mLastAction->verb].insert(mLastAction->caseLabel);
+    }
+    
     // Execute finish callback if specified.
     if(mCurrentActionFinishCallback != nullptr)
     {
@@ -880,11 +900,11 @@ void ActionManager::OnActionExecuteFinished()
 	{
 		ShowTopicBar(mLastAction->noun);
 	}
-	else if(Services::Get<VerbManager>()->IsTopic(mLastAction->verb))
+	else if(gVerbManager.IsTopic(mLastAction->verb))
 	{
 		ShowTopicBar(mLastAction->noun);
 	}
-    else if(Services::Get<DialogueManager>()->InConversation()) // *seems* necessary to end conversations started during cutscenes (ex: Gabe/Mosely scene in Dining Room)
+    else if(gDialogueManager.InConversation()) // *seems* necessary to end conversations started during cutscenes (ex: Gabe/Mosely scene in Dining Room)
     {
         if(!mLastAction->talkTo.empty())
         {

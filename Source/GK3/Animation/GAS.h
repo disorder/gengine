@@ -18,10 +18,10 @@ struct GasNode;
 class GAS : public Asset
 {
 public:
-    GAS(const std::string& name);
+    GAS(const std::string& name, AssetScope scope) : Asset(name, scope) { }
     ~GAS();
 
-    void Load(char* data, int dataLength);
+    void Load(uint8_t* data, uint32_t dataLength);
     
     GasNode* GetNode(int index) { return mNodes[index]; }
     int GetNodeCount() { return (int)mNodes.size(); }

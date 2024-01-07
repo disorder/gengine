@@ -10,6 +10,26 @@
 #include "Rect.h"
 #include "Vector2.h"
 
+enum class AnchorPreset
+{
+    TopLeft,
+    Top,
+    TopStretch,
+    TopRight,
+
+    Left,
+    LeftStretch,
+    Center,
+    CenterStretch,
+    Right,
+    RightStretch,
+
+    BottomLeft,
+    Bottom,
+    BottomStretch,
+    BottomRight,
+};
+
 class RectTransform : public Transform
 {
 	TYPE_DECL_CHILD();
@@ -24,11 +44,13 @@ public:
 	void SetSizeDelta(const Vector2& size);
 	void SetSizeDeltaX(float x);
 	void SetSizeDeltaY(float y);
+    const Vector2& GetSizeDelta() const { return mSizeDelta; }
 	
 	void SetPivot(float x, float y);
 	void SetPivot(const Vector2& pivot);
 	Vector2 GetPivot() const { return mPivot; }
-	
+
+    void SetAnchor(AnchorPreset preset, bool setPivot = true);
 	void SetAnchor(float x, float y) { SetAnchor(Vector2(x, y)); }
 	void SetAnchor(const Vector2& anchor);
 	

@@ -42,9 +42,13 @@ namespace Window
     inline uint32_t GetWidth() { return GetResolution().width; }
     inline uint32_t GetHeight() { return GetResolution().height; }
     inline Vector2 GetSize() { return Vector2(static_cast<float>(GetWidth()), static_cast<float>(GetHeight())); }
-    inline Rect GetRect() { return Rect(0, 0, GetWidth(), GetHeight()); }
+    inline Rect GetRect() { return Rect(0, 0, static_cast<float>(GetWidth()), static_cast<float>(GetHeight())); }
     
     // Position
     void SetPosition(int x, int y);
     void OnPositionChanged();
+
+    // Title
+    void SetTitle(const char* title);
+    const char* GetTitle();
 };

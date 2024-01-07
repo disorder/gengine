@@ -3,92 +3,85 @@
 #include "Animation.h"
 #include "Animator.h"
 #include "AnimationNodes.h"
+#include "AssetManager.h"
+#include "BSP.h"
 #include "CharacterManager.h"
 #include "Debug.h"
 #include "FaceController.h"
 #include "GAS.h"
 #include "GasPlayer.h"
-#include "GEngine.h"
+#include "GKProp.h"
 #include "MeshRenderer.h"
 #include "Model.h"
-#include "Scene.h"
-#include "Services.h"
+#include "SceneManager.h"
 #include "StringUtil.h"
 #include "VertexAnimation.h"
 #include "VertexAnimator.h"
 #include "Walker.h"
 
-GKActor::GKActor()
+GKActor::GKActor(const SceneActor* actorDef) :
+    mActorDef(actorDef)
 {
-    // Because of how animations work, GKActors require a separate Actor for their models.
+    // Set noun (GABRIEL, GRACE, etc) used to refer to Actor in Noun/Verb/Case logic.
+    SetNoun(mActorDef->noun);
+
+    // Set name to the name of the 3D model, which is a three-letter "character ID" (e.g. GAB, GRA, MOS).
+    // This is sometimes used for gameplay logic, so be careful about changing this!
+    SetName(mActorDef->model->GetNameNoExtension());
+
+    // Grab this character's config using its three-letter "character ID".
+    CharacterConfig& config = gCharacterManager.GetCharacterConfig(GetName());
+    mCharConfig = &config;
+
+    // Create a separate Actor for the GKActor's 3D model visuals.
+    // This is required b/c the 3D model often moves and is positioned independently of this GKActor instance.
     mModelActor = new Actor();
+
+    // Add 3D model renderer using lit textured shader.
     mMeshRenderer = mModelActor->AddComponent<MeshRenderer>();
-
-    // Actors use lit shader.
-    mMeshRenderer->SetShader(Services::GetAssets()->LoadShader("3D-Tex-Lit"));
-
-     // Create animation player on the same object as the mesh renderer.
+    mMeshRenderer->SetModel(mActorDef->model);
+    mMeshRenderer->SetShader(gAssetManager.LoadShader("3D-Tex-Lit"));
+    
+    // Add vertex animator so the 3D model can be animated.
     mVertexAnimator = mModelActor->AddComponent<VertexAnimator>();
 
-    // GasPlayer will go on the actor itself.
+    // Add GasPlayer to control logic flow for fidgets.
     mGasPlayer = AddComponent<GasPlayer>();
+
+    // Add a face controller to this actor.
+    mFaceController = AddComponent<FaceController>();
+    mFaceController->SetCharacterConfig(config);
+
+    // Add a walker to this actor.
+    mWalker = AddComponent<Walker>();
+    mWalker->SetCharacterConfig(config);
 }
 
-GKActor::GKActor(Model* model) : GKActor()
+void GKActor::Init(const SceneData& sceneData)
 {
-    // Set actor's 3D model.
-    mMeshRenderer->SetModel(model);
+    // FIRST: sampling the first frame of the "walk start" anim ensures all 3D models are at a sane default.
+    // This matches the behavior of the original game when a GKActor is spawned with no position or fidgets.
+    gSceneManager.GetScene()->GetAnimator()->Sample(mCharConfig->walkStartAnim, 0);
 
-    // Use the model's name as the name of the actor.
-    // This is sometimes used for gameplay logic, so be careful about changing this!
-    SetName(mMeshRenderer->GetModelName());
-    
-	// Get config for this character.
-    // It is assumed that the name of the actor's model corresponds to their three-letter character ID (e.g. GAB, GRA, MOS).
-	CharacterConfig& config = Services::Get<CharacterManager>()->GetCharacterConfig(model->GetNameNoExtension());
-	mCharConfig = &config;
-	
-	// Create and configure face controller.
-	mFaceController = AddComponent<FaceController>();
-	mFaceController->SetCharacterConfig(config);
-	
-	// Add walker and configure it.
-	mWalker = AddComponent<Walker>();
-	mWalker->SetCharacterConfig(config);
-}
-
-GKActor::GKActor(const SceneActor& actorDef) : GKActor(actorDef.model)
-{
-    // Set noun (GABRIEL, GRACE, etc).
-    // For debugging help, we'll also set the Actor name field to the noun.
-    SetNoun(actorDef.noun);
-
-    // Set actor's initial position and rotation.
-    if(!actorDef.positionName.empty())
+    // Set actor's initial position and rotation, if any was specified.
+    if(!mActorDef->positionName.empty())
     {
-        const ScenePosition* scenePos = GEngine::Instance()->GetScene()->GetPosition(actorDef.positionName);
+        const ScenePosition* scenePos = gSceneManager.GetScene()->GetPosition(mActorDef->positionName);
         if(scenePos != nullptr)
         {
             SetPosition(scenePos->position);
             SetHeading(scenePos->heading);
         }
-        else
-        {
-            std::cout << "Invalid position for actor: " << actorDef.positionName << std::endl;
-        }
     }
+    
+    // Set initial idle/talk/listen fidgets for this actor.
+    SetIdleFidget(mActorDef->idleGas);
+    SetTalkFidget(mActorDef->talkGas);
+    SetListenFidget(mActorDef->listenGas);
 
-    // Save actor's GAS references.
-    SetIdleFidget(actorDef.idleGas);
-    SetTalkFidget(actorDef.talkGas);
-    SetListenFidget(actorDef.listenGas);
+    // If we should be hidden by default, set inactive.
+    SetActive(!mActorDef->hidden);
 
-    // If it should be hidden by default, hide it.
-    SetActive(!actorDef.hidden);
-}
-
-void GKActor::Init(const SceneData& sceneData)
-{
     // Start in idle state.
     StartFidget(GKActor::FidgetType::Idle);
 
@@ -114,7 +107,7 @@ void GKActor::Init(const SceneData& sceneData)
         }
         else
         {
-            // If not "Default", the string must represent a timeblock. Convert it to one.
+            // If not "Default", the string must represent an actual timeblock. Convert it to one.
             Timeblock clothesTimeblock(clothes.first);
 
             // We use these clothes if our timeblock is at or after the clothes' timeblock.
@@ -127,7 +120,7 @@ void GKActor::Init(const SceneData& sceneData)
     }
     if(clothesAnim != nullptr)
     {
-        GEngine::Instance()->GetScene()->GetAnimator()->Start(clothesAnim);
+        gSceneManager.GetScene()->GetAnimator()->Start(clothesAnim);
     }
 
     // Apply lighting settings from scene.
@@ -137,6 +130,9 @@ void GKActor::Init(const SceneData& sceneData)
         //TODO: Color?
         //TODO: Ambient Color?
     }
+
+    // Sample an init anim (if any) that poses the GKActor as needed for scene start.
+    gSceneManager.GetScene()->GetAnimator()->Sample(mActorDef->initAnim, 0);
 }
 
 void GKActor::StartFidget(FidgetType type)
@@ -265,13 +261,9 @@ Vector3 GKActor::GetWalkDestination() const
 
 void GKActor::SnapToFloor()
 {
-    Scene* scene = GEngine::Instance()->GetScene();
-    if(scene != nullptr)
-    {
-        Vector3 pos = GetPosition();
-        pos.y = scene->GetFloorY(pos);
-        SetPosition(pos);
-    }
+    Vector3 pos = GetPosition();
+    pos.y = mFloorHeight;
+    SetPosition(pos);
 }
 
 const std::string& GKActor::GetShoeType() const
@@ -299,23 +291,47 @@ Vector3 GKActor::GetHeadPosition() const
     }
 
     // If head mesh isn't present for some reason, approximate based on position and height.
-	Vector3 position = GetPosition();
+	Vector3 position = GetFloorPosition();
 	position.y += mCharConfig->walkerHeight;
 	return position;
 }
 
+Vector3 GKActor::GetFloorPosition() const
+{
+    // Get hip pos and convert to world space.
+    // To do this, multiply the mesh->local with local->world to get a mesh->world matrix for transforming.
+    Vector3 meshHipPos = mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetSubmesh(mCharConfig->hipAxesGroupIndex)->GetVertexPosition(mCharConfig->hipAxesPointIndex);
+    Vector3 worldHipPos = (mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetMeshToLocalMatrix()).TransformPoint(meshHipPos);
+
+    // Get left/right shoe positions.
+    Vector3 meshLeftShoePos = mMeshRenderer->GetMesh(mCharConfig->leftShoeAxesMeshIndex)->GetSubmesh(mCharConfig->leftShoeAxesGroupIndex)->GetVertexPosition(mCharConfig->leftShoeAxesPointIndex);
+    Vector3 worldLeftShoePos = (mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->leftShoeAxesMeshIndex)->GetMeshToLocalMatrix()).TransformPoint(meshLeftShoePos);
+
+    Vector3 meshRightShoePos = mMeshRenderer->GetMesh(mCharConfig->rightShoeAxesMeshIndex)->GetSubmesh(mCharConfig->rightShoeAxesGroupIndex)->GetVertexPosition(mCharConfig->rightShoeAxesPointIndex);
+    Vector3 worldRightShoePos = (mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->rightShoeAxesMeshIndex)->GetMeshToLocalMatrix()).TransformPoint(meshRightShoePos);
+
+    // Use left/right shoe positions to determine our floor position.
+    // We're assuming that the actor's lowest foot, minus show thickness, is the floor height.
+    Vector3 floorPos = worldHipPos;
+    floorPos.y = Math::Min(worldLeftShoePos.y, worldRightShoePos.y);
+    floorPos.y -= mCharConfig->shoeThickness;
+    return floorPos;
+}
+
 void GKActor::SetPosition(const Vector3& position)
 {
-    // Move actor to position.
+    // Move actor to position using base class behavior.
     Actor::SetPosition(position);
-    //std::cout << "Set Actor Position; actorPos=" << GetPosition() << ", modelPos=" << mModelActor->GetPosition() << std::endl;
 
     // If the actor is playing a non-move animation, it will revert to its start position when the animation ends...this will revert the SetPosition call!
     // To resolve this, we must update the saved start position when the actor's position is manually changed.
     mStartVertexAnimPosition = position;
 
-    // Move model to align with new position.
-    SyncModelToActor();
+    // Move model to desired new position.
+    SetModelPositionToActorPosition();
+
+    // Update floor info, since actor moved to a new spot.
+    RefreshFloorInfo();
 }
 
 void GKActor::Rotate(float angle)
@@ -326,8 +342,8 @@ void GKActor::Rotate(float angle)
     // As with SetHeading, we must update this value to avoid reverting rotations after current anim completes.
     mStartVertexAnimRotation = GetRotation();
 
-    // Make sure model matches this rotation.
-    SyncModelToActor();
+    // Rotate model to desired new rotation.
+    SetModelRotationToActorRotation();
 }
 
 void GKActor::SetHeading(const Heading& heading)
@@ -338,9 +354,9 @@ void GKActor::SetHeading(const Heading& heading)
     // If actor is playing a non-move animation, it will revert to its start rotation when the animation ends, reverting this call.
     // To resolve this, we must update the saved start rotation when manually setting the heading/rotation.
     mStartVertexAnimRotation = GetRotation();
-    
-    // Update model to match.
-    SyncModelToActor();
+
+    // Rotate model to desired new rotation.
+    SetModelRotationToActorRotation();
 }
 
 void GKActor::StartAnimation(VertexAnimParams& animParams)
@@ -368,15 +384,17 @@ void GKActor::StartAnimation(VertexAnimParams& animParams)
         mModelActor->SetRotation(animParams.absoluteHeading.ToQuaternion());
     }
     
-    // For relative anims, move model to match actor's position/rotation.
+    // Relative anims play with the 3D model starting at the Actor's current position/rotation.
+    // So, do a sync to ensure the 3D model is at the Actor's position.
     if(!animParams.absolute)
     {
-        SyncModelToActor();
+        SetModelPositionToActorPosition();
+        SetModelRotationToActorRotation();
     }
 
-    // In GK3, a "move" anim is one that is allowed to move the actor. This is like "root motion" in modern engines.
-    // When "move" anim ends, the actor/mesh stay where they are. For "non-move" anims, actor/mesh revert to initial pos/rot.
-    // Interestingly, the actor still moves with the model during non-move anims...it just reverts at the end.
+    // In GK3, a "move" anim keeps the model & actor at their final position/rotation when the animation reaches its end.
+    // Non-move anims revert the model/actor back to their start positions/rotations when the animation ends.
+    // So, if this is NOT a move animation, store current position/rotation so we can revert at the end.
     mVertexAnimAllowMove = animParams.allowMove;
     if(!mVertexAnimAllowMove)
     {
@@ -401,12 +419,14 @@ void GKActor::SampleAnimation(VertexAnimParams& animParams, int frame)
     // For relative anims, move model to match actor's position/rotation.
     if(!animParams.absolute)
     {
-        SyncModelToActor();
+        SetModelPositionToActorPosition();
+        SetModelRotationToActorRotation();
     }
 
     // In GK3, a "move" anim is one that is allowed to move the actor. This is like "root motion" in modern engines.
     // When "move" anim ends, the actor/mesh stay where they are. For "non-move" anims, actor/mesh revert to initial pos/rot.
     // Interestingly, the actor still moves with the model during non-move anims...it just reverts at the end.
+    /*
     mVertexAnimAllowMove = animParams.allowMove;
     if(!mVertexAnimAllowMove)
     {
@@ -414,6 +434,10 @@ void GKActor::SampleAnimation(VertexAnimParams& animParams, int frame)
         mStartVertexAnimPosition = GetPosition();
         mStartVertexAnimRotation = GetRotation();
     }
+    */
+
+    //SetModelPositionToActorPosition();
+    //SetModelRotationToActorRotation();
 }
 
 void GKActor::StopAnimation(VertexAnimation* anim)
@@ -441,110 +465,188 @@ void GKActor::OnInactive()
 
 void GKActor::OnUpdate(float deltaTime)
 {
-    GKObject::OnUpdate(deltaTime);
-    
-    // Have actor follow model movement.
-    SyncActorToModel();
+    // OPTIONAL: draw axes to visualize Actor position and facing.
+    //Debug::DrawAxes(GetTransform()->GetLocalToWorldMatrix());
+
+    // Set actor position to match model's floor position.
+    GetTransform()->SetPosition(GetFloorPosition());
+
+    // Set actor facing direction to match the model's facing direction.
+    {
+        // Get mine and model's facing directions.
+        Vector3 myFacingDir = GetHeading().ToDirection();
+        Vector3 modelFacingDir = GetModelFacingDirection();
+
+        // Calculate angle I should rotate to match model's direction.
+        // Use cross product to determine clockwise or counter-clockwise rotation.
+        float angleRadians = Math::Acos(Math::Clamp(Vector3::Dot(myFacingDir, modelFacingDir), -1.0f, 1.0f));
+        if(Vector3::Cross(myFacingDir, modelFacingDir).y < 0)
+        {
+            angleRadians *= -1;
+        }
+
+        // Rotate desired direction and amount.
+        GetTransform()->Rotate(Vector3::UnitY, angleRadians);
+    }
+
+    // Update floor info based on updated position.
+    RefreshFloorInfo();
 }
 
 void GKActor::OnVertexAnimationStop()
 {
-    // On anim stop, if vertex anim is not allowed to move actor position,
-    // we must revert actor back to position when anim started.
+    // If this wasn't a "move" anim, we must revert back to the initial position/rotation on animation end.
     if(!mVertexAnimAllowMove)
     {
-        // Move actor back to start position/rotation.
         Actor::SetPosition(mStartVertexAnimPosition);
-        SetRotation(mStartVertexAnimRotation);
-
-        // Move model to match actor.
-        SyncModelToActor();
+        Actor::SetRotation(mStartVertexAnimRotation);
     }
 }
 
-Vector3 GKActor::GetModelPosition()
+Vector3 GKActor::GetModelFacingDirection() const
 {
-    // Get hip pos and convert to world space.
-    // To do this, multiply the mesh->local with local->world to get a mesh->world matrix for transforming.
-    Vector3 meshHipPos = mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetSubmesh(mCharConfig->hipAxesGroupIndex)->GetVertexPosition(mCharConfig->hipAxesPointIndex);
-    Vector3 worldHipPos = (mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetMeshToLocalMatrix()).TransformPoint(meshHipPos);
+    // There are a few different ways to possibly calculate the model's facing direction.
+    // The method used may differ from Actor to Actor or be based on the current state of the Actor.
+    Vector3 facingDir = Vector3::UnitZ;
 
-    // Get left/right shoe positions.
-    Vector3 meshLeftShoePos = mMeshRenderer->GetMesh(mCharConfig->leftShoeAxesMeshIndex)->GetSubmesh(mCharConfig->leftShoeAxesGroupIndex)->GetVertexPosition(mCharConfig->leftShoeAxesPointIndex);
-    Vector3 worldLeftShoePos = (mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->leftShoeAxesMeshIndex)->GetMeshToLocalMatrix()).TransformPoint(meshLeftShoePos);
+    if(mModelFacingHelper != nullptr)
+    {
+        // The facing helper is an arrow/triangle. Get it's three points in world space.
+        Mesh* arrowMesh = mModelFacingHelper->GetMeshRenderer()->GetMesh(0);
+        Submesh* arrowSubmesh = arrowMesh->GetSubmesh(0);
+        Matrix4 meshToWorldMatrix = mModelFacingHelper->GetTransform()->GetLocalToWorldMatrix() * arrowMesh->GetMeshToLocalMatrix();
 
-    Vector3 meshRightShoePos = mMeshRenderer->GetMesh(mCharConfig->rightShoeAxesMeshIndex)->GetSubmesh(mCharConfig->rightShoeAxesGroupIndex)->GetVertexPosition(mCharConfig->rightShoeAxesPointIndex);
-    Vector3 worldRightShoePos = (mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->rightShoeAxesMeshIndex)->GetMeshToLocalMatrix()).TransformPoint(meshRightShoePos);
+        Vector3 worldPoint1 = meshToWorldMatrix.TransformPoint(arrowSubmesh->GetVertexPosition(0));
+        Vector3 worldPoint2 = meshToWorldMatrix.TransformPoint(arrowSubmesh->GetVertexPosition(1));
+        Vector3 worldPoint3 = meshToWorldMatrix.TransformPoint(arrowSubmesh->GetVertexPosition(2));
 
-    //Debug::DrawLine(worldHipPos, worldLeftShoePos, Color32::Cyan);
-    //Debug::DrawLine(worldHipPos, worldRightShoePos, Color32::Red);
-    //Debug::DrawLine(worldLeftShoePos, worldRightShoePos, Color32::Magenta);
-    
-    // Use left/right shoe positions to determine our floor position.
-    // We're assuming that the actor's lowest foot, minus show thickness, is the floor height.
-    Vector3 floorPos = worldHipPos;
-    floorPos.y = Math::Min(worldLeftShoePos.y, worldRightShoePos.y);
-    floorPos.y -= mCharConfig->shoeThickness;
+        // (Optionally) visualize the facing helper triangle in world space.
+        /*
+        {
+            //Debug::DrawLine(worldPoint1, worldPoint1 + Vector3::UnitY * 10.0f, Color32::Green);
+            //Debug::DrawLine(worldPoint2, worldPoint2 + Vector3::UnitY * 10.0f, Color32::Cyan);
+            //Debug::DrawLine(worldPoint3, worldPoint3 + Vector3::UnitY * 10.0f, Color32::Magenta);
 
-    Vector3 leftShoeToHips = worldHipPos - worldLeftShoePos;
-    Vector3 rightShoeToHips = worldHipPos - worldRightShoePos;
-    Vector3 modelForward = Vector3::Normalize(Vector3::Cross(rightShoeToHips, leftShoeToHips));
-    //Debug::DrawLine(floorPos, floorPos + modelForward * 5, Color32::Magenta);
+            Debug::DrawLine(worldPoint1, worldPoint2, Color32::Blue);
+            Debug::DrawLine(worldPoint2, worldPoint3, Color32::Blue);
+            Debug::DrawLine(worldPoint3, worldPoint1, Color32::Blue);
+            Debug::DrawLine(GetPosition(), mModelFacingHelper->GetPosition(), Color32::White);
+        }
+        */
 
-    return floorPos;
+        // SCENARIO A: We have a model facing helper, and it is currently in use (it's animating or we are walking).
+        if(mModelFacingHelper->GetComponent<VertexAnimator>()->IsPlaying() || mWalker->IsWalkingExceptTurn())
+        {
+            // Use those three points to calculate a facing direction. The "point" of the arrow is pt 1.
+            // OF COURSE these points aren't consistent...Mosely uses different ones.
+            if(StringUtil::EqualsIgnoreCase(GetName(), "MOS"))
+            {
+                facingDir = Vector3::Normalize(worldPoint3 - ((worldPoint1 + worldPoint2) / 2));
+            }
+            else
+            {
+                facingDir = Vector3::Normalize(worldPoint1 - ((worldPoint2 + worldPoint3) / 2));
+            }
+        }
+        else // SCENARIO B: We have a model facing helper, but not currently in use.
+        {
+            // Calculate head and shoe positions to create a triangle.
+            Vector3 meshHeadPos = mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetMeshToLocalMatrix().GetTranslation();
+            Vector3 worldHeadPos = mModelActor->GetTransform()->GetLocalToWorldMatrix().TransformPoint(meshHeadPos);
+
+            Vector3 meshLeftShoePos = mMeshRenderer->GetMesh(mCharConfig->leftShoeAxesMeshIndex)->GetMeshToLocalMatrix().GetTranslation();
+            Vector3 worldLeftShoePos = mModelActor->GetTransform()->GetLocalToWorldMatrix().TransformPoint(meshLeftShoePos);
+
+            Vector3 meshRightShoePos = mMeshRenderer->GetMesh(mCharConfig->rightShoeAxesMeshIndex)->GetMeshToLocalMatrix().GetTranslation();
+            Vector3 worldRightShoePos = mModelActor->GetTransform()->GetLocalToWorldMatrix().TransformPoint(meshRightShoePos);
+
+            // Imagine these three points are a triangle. Calculate the surface normal of the triangle. This is our facing direction.
+            Vector3 vec1 = worldRightShoePos - worldLeftShoePos;
+            Vector3 vec2 = worldHeadPos - worldLeftShoePos;
+            Vector3 perp = Vector3::Cross(vec1, vec2);
+            perp.y = 0.0f;
+            facingDir = Vector3::Normalize(perp);
+
+            // (Optionally) visualize this method.
+            /*
+            {
+                Debug::DrawLine(worldRightShoePos, worldLeftShoePos, Color32::Magenta, 0.0f);
+                Debug::DrawLine(worldHeadPos, worldRightShoePos, Color32::Magenta, 0.0f);
+                Debug::DrawLine(worldHeadPos, worldLeftShoePos, Color32::Magenta, 0.0f);
+            }
+            */
+
+            // If we use this approach, be sure to keep the facing helper synchronized.
+            mModelFacingHelper->SetPosition(mModelActor->GetPosition());
+            mModelFacingHelper->SetRotation(mModelActor->GetRotation());
+        }
+    }
+    else // SCENARIO C: No facing helper, this is a very simple Actor (e.g. Chicken).
+    {
+        // Get the hip axis, convert y-axis to a facing direction.
+        // Remember, models are facing down negative z-axis, so need to negate the axis we get back here.
+        Matrix4 hipMeshToWorldMatrix = mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetMeshToLocalMatrix();
+        facingDir = -hipMeshToWorldMatrix.GetYAxis();
+    }
+
+    //Debug::DrawLine(GetPosition(), GetPosition() + facingDir * 10.0f, Color32::Blue);
+    return facingDir;
 }
 
-Quaternion GKActor::GetModelRotation()
+void GKActor::SetModelPositionToActorPosition()
 {
-    // Note that this is the rotation of the model actor, so it is facing in opposite direction of actor.
-    Matrix4 hipMeshToWorldMatrix = mModelActor->GetTransform()->GetLocalToWorldMatrix() * mMeshRenderer->GetMesh(mCharConfig->hipAxesMeshIndex)->GetMeshToLocalMatrix();
-    return hipMeshToWorldMatrix.GetRotation();
+    // Here's a tricky thing: the 3D model's *visual* position IS NOT always identical to the 3D model's *actor* position!
+    // The 3D model vertices may be significantly offset in the local space of the 3D model actor.
+    // To account for that, calculate the offset.
+    Vector3 modelVisualOffset = mModelActor->GetPosition() - GetFloorPosition();
+
+    // Move the model actor to our position, taking this offset into account.
+    // This causes the model's visuals to be exactly at our position.
+    mModelActor->SetPosition(GetPosition() + modelVisualOffset);
+
+    // Sync facing helper too.
+    if(mModelFacingHelper != nullptr)
+    {
+        mModelFacingHelper->SetPosition(mModelActor->GetPosition());
+    }
 }
 
-void GKActor::SyncModelToActor()
+void GKActor::SetModelRotationToActorRotation()
 {
-    // Move model to actor's position.
-    Vector3 modelOffset = mModelActor->GetPosition() - GetModelPosition();
-    //if(modelOffset.GetLength() > 1.0f)
-    //{
-    //    Debug::DrawLine(mModelActor->GetPosition(), mModelActor->GetPosition() + modelOffset, Color32::Red, 30.0f);
-    //}
-    mModelActor->SetPosition(GetPosition() + modelOffset);
+    // Get model's facing direction.
+    Vector3 modelDirection = GetModelFacingDirection();
 
-    // Rotate model to actor's rotation.
-    Quaternion desiredRotation = GetRotation() * Quaternion(Vector3::UnitY, Math::kPi);
-    Quaternion currentRotation = GetModelRotation();
-    Quaternion diff = Quaternion::Diff(desiredRotation, currentRotation);
-    diff.IsolateY();
-    mModelActor->GetTransform()->RotateAround(GetPosition(), diff);
-    
-    // Save new baseline model position/rotation.
-    mLastModelPosition = GetModelPosition();
-    mLastModelRotation = GetModelRotation();
+    // Get actor's facing direction.
+    Vector3 desiredDirection = GetHeading().ToDirection();
+    //Debug::DrawLine(GetPosition(), GetPosition() + modelDirection * 10.0f, Color32::Magenta, 60.0f);
+    //Debug::DrawLine(GetPosition(), GetPosition() + desiredDirection * 10.0f, Color32::Magenta, 60.0f);
+        
+    // Get the angle between the model's direction and the actor's direction.
+    float angleRadians = Math::Acos(Math::Clamp(Vector3::Dot(modelDirection, desiredDirection), -1.0f, 1.0f));
+
+    // Use cross product to determine clockwise or counter-clockwise angle between the two.
+    if(Vector3::Cross(modelDirection, desiredDirection).y < 0)
+    {
+        angleRadians *= -1;
+    }
+
+    // Rotate model by this angle to now be facing the actor's rotation correctly.
+    mModelActor->GetTransform()->RotateAround(GetPosition(), Quaternion(Vector3::UnitY, angleRadians));
+
+    // Sync facing helper too.
+    if(mModelFacingHelper != nullptr)
+    {
+        mModelFacingHelper->SetRotation(mModelActor->GetRotation());
+    }
 }
 
-void GKActor::SyncActorToModel()
+void GKActor::RefreshFloorInfo()
 {
-    // See how much model has moved since last check and translate actor to match.
-    Vector3 modelPosition = GetModelPosition();
-    GetTransform()->SetPosition(modelPosition);
-    //Vector3 modelOffset = modelPosition - mLastModelPosition;
-    //GetTransform()->Translate(modelOffset);
-    //if(modelOffset.GetLength() > 1.0f)
-    //{
-    //    Debug::DrawLine(mLastModelPosition, mLastModelPosition + Vector3::UnitY * 50.0f, Color32::Blue, 30.0f);
-    //    Debug::DrawLine(modelPosition, modelPosition + Vector3::UnitY * 100.0f, Color32::Blue, 30.0f);
-    //}
-    
-    // See how much mesh has rotated and translate actor to match.
-    Quaternion modelRotation = GetModelRotation();
-    Quaternion diff = Quaternion::Diff(modelRotation, mLastModelRotation);
-    diff.IsolateY();
-    GetTransform()->Rotate(diff);
-    
-    // Save new baseline model position/rotation.
-    mLastModelPosition = modelPosition;
-    mLastModelRotation = modelRotation;
+    Scene* scene = gSceneManager.GetScene();
+    if(scene != nullptr && scene->GetSceneData() != nullptr && scene->GetSceneData()->GetBSP() != nullptr)
+    {
+        scene->GetSceneData()->GetBSP()->GetFloorInfo(GetPosition(), mFloorHeight, mFloorTexture);
+    }
 }
 
 GAS* GKActor::GetGasForFidget(FidgetType type)
@@ -562,6 +664,7 @@ GAS* GKActor::GetGasForFidget(FidgetType type)
         break;
     case FidgetType::Talk:
         gas = mTalkFidget;
+        break;
     }
     return gas;
 }

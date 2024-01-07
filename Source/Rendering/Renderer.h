@@ -1,15 +1,12 @@
 //
-//  Renderer.h
-//  GEngine
+// Clark Kromenaker
 //
-//  Created by Clark Kromenaker on 7/22/17.
+// Manages rendering system state, as well as high level rendering pipeline.
+// Actual rendering commands are delegated to the underlying "graphics API" (GAPI) implementation.
 //
 #pragma once
 #include <string>
 #include <vector>
-
-#include <SDL.h>
-#include <GL/glew.h>
 
 #include "Matrix4.h"
 #include "Rect.h"
@@ -50,12 +47,7 @@ public:
 
     void ChangeResolution(const Window::Resolution& resolution);
 
-    SDL_GLContext GetGLContext() { return mContext; }
-
 private:
-    // Context handle for rendering in OpenGL.
-    SDL_GLContext mContext = nullptr;
-    
     // Our camera in the scene - we currently only support one.
     Camera* mCamera = nullptr;
     
@@ -72,3 +64,5 @@ private:
     bool mUseMipmaps = true;
     bool mUseTrilinearFiltering = true;
 };
+
+extern Renderer gRenderer;

@@ -1,10 +1,11 @@
 #include "UIButton.h"
 
 #include "Actor.h"
+#include "AudioManager.h"
 #include "Camera.h"
+#include "CursorManager.h"
 #include "Debug.h"
 #include "Mesh.h"
-#include "Services.h"
 #include "RectTransform.h"
 #include "Texture.h"
 
@@ -84,24 +85,24 @@ void UIButton::OnPointerEnter()
         const Color32* color = mMaterial.GetColor("uColor");
         if(mMaterial.GetDiffuseTexture() != nullptr && color != nullptr && color->GetA() > 0)
         {
-            Services::Get<CursorManager>()->UseHighlightCursor();
+            gCursorManager.UseHighlightCursor();
         }
         else
         {
-            Services::Get<CursorManager>()->UseDefaultCursor();
+            gCursorManager.UseDefaultCursor();
         }
 
         // Play hover sound, if set.
         if(mHoverSound != nullptr)
         {
-            Services::GetAudio()->PlaySFX(mHoverSound);
+            gAudioManager.PlaySFX(mHoverSound);
         }
     }
 }
 
 void UIButton::OnPointerExit()
 {
-    Services::Get<CursorManager>()->UseDefaultCursor();
+    gCursorManager.UseDefaultCursor();
 	mPointerOver = false;
 }
 
@@ -146,7 +147,7 @@ void UIButton::UpdateMaterial()
 {
     // If marked as pointer down, but pointer was released, clear that flag.
     // This can happen if mouse is pressed down on this widget, but released outside of the widget.
-    if(mPointerDown && !Services::GetInput()->IsMouseButtonPressed(InputManager::MouseButton::Left))
+    if(mPointerDown && !gInputManager.IsMouseButtonPressed(InputManager::MouseButton::Left))
     {
         mPointerDown = false;
 
@@ -155,61 +156,61 @@ void UIButton::UpdateMaterial()
     }
 
     // Figure out which state to use.
-    State& state = mDisabledState;
+    State* state = &mDisabledState;
     if(mCanInteract)
     {
         // The button shows as down when pressed down, but only if pointer is also over the button.
         // You can press down on a button and then move the pointer all over before releasing it!
         if(mPointerDown && mPointerOver)
         {
-            state = mDownState;
+            state = &mDownState;
         }
         // When in pointer down state, but moving pointer all over, the button should still show as hovered.
         else if(mPointerOver || mPointerDown) 
         {
-            state = mHoverState;
+            state = &mHoverState;
         }
         else
         {
-            state = mUpState;
+            state = &mUpState;
         }
     }
 
     // Try to find fallback state if this state is not set.
-    if(!state.IsSet())
+    if(!state->IsSet())
     {
         if(mUpState.IsSet())
         {
-            state = mUpState;
+            state = &mUpState;
         }
         else if(mHoverState.IsSet())
         {
-            state = mHoverState;
+            state = &mHoverState;
         }
         else if(mDownState.IsSet())
         {
-            state = mDownState;
+            state = &mDownState;
         }
         else
         {
-            state = mDisabledState;
+            state = &mDisabledState;
         }
     }
 
     // Set color - easy enough.
-    mMaterial.SetColor(state.color);
+    mMaterial.SetColor(state->color);
 
     // If we have a texture, use it!
-    if(state.texture != nullptr)
+    if(state != nullptr && state->texture != nullptr)
     {
         // If our rect transform's anchors are equal, we'll assume we want the size of the rect to equal the texture size.
         // However, if NOT equal, then size is dictated by parent and anchors, so don't mess with it. (On the Map screen, for example).
         if(mResizeBasedOnTexture && GetRectTransform()->GetAnchorMin() == GetRectTransform()->GetAnchorMax())
         {
-            GetRectTransform()->SetSizeDelta(state.texture->GetWidth(), state.texture->GetHeight());
+            GetRectTransform()->SetSizeDelta(state->texture->GetWidth(), state->texture->GetHeight());
         }
         
         // Set texture.
-        mMaterial.SetDiffuseTexture(state.texture);
+        mMaterial.SetDiffuseTexture(state->texture);
     }
 }

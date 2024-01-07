@@ -2,15 +2,13 @@
 
 #include <iostream>
 
-#include "Services.h"
+#include "SheepCompiler.h"
 #include "SheepSysFunc.h"
 #include "StringUtil.h"
 
 //#define DEBUG_BUILDER
 
-SheepScriptBuilder::SheepScriptBuilder(SheepCompiler* compiler, const std::string& name) :
-	mCompiler(compiler),
-	mScriptName(name)
+SheepScriptBuilder::SheepScriptBuilder()
 {
 	#ifdef DEBUG_BUILDER
 	std::cout << "SheepBuilder BEGIN" << std::endl;
@@ -247,7 +245,7 @@ SheepValueType SheepScriptBuilder::CallSysFunc(std::string sysFuncName, const Lo
 	
 	// Check that arg types are compatible.
 	bool argTypesCompatible = true;
-	for(int i = 0; i < sysFunc->argumentTypes.size(); i++)
+	for(size_t i = 0; i < sysFunc->argumentTypes.size(); i++)
 	{
 		SheepValue& value = mSysFuncArgs[i];
 		int argType = sysFunc->argumentTypes[i];
@@ -1209,10 +1207,16 @@ int SheepScriptBuilder::GetStringConstOffset(std::string stringConst)
 
 void SheepScriptBuilder::LogWarning(const Location& loc, const std::string& message)
 {
-	mCompiler->Warning(this, loc, message);
+    if(mCompiler != nullptr)
+    {
+        mCompiler->Warning(this, loc, message);
+    }
 }
 
 void SheepScriptBuilder::LogError(const Location& loc, const std::string& message)
 {
-	mCompiler->Error(this, loc, message);
+    if(mCompiler != nullptr)
+    {
+        mCompiler->Error(this, loc, message);
+    }
 }

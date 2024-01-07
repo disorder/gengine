@@ -5,34 +5,58 @@
 #include <fstream>
 
 #include "BinaryReader.h"
+#include "mstream.h"
+#include "SheepManager.h"
 #include "SheepScriptBuilder.h"
 #include "StringUtil.h"
 
-/*static*/ bool SheepScript::IsSheepDataCompiled(char* data, int dataLength)
+/*static*/ bool SheepScript::IsSheepDataCompiled(uint8_t* data, uint32_t dataLength)
 {
     // If the first 8 bytes of the data is GK3Sheep, we'll assume this is valid compiled Sheepscript data.
     // Otherwise, it may be a text-based (uncompiled) Sheepscript, or some other data entirely.
     return dataLength >= 8 && memcmp(data, "GK3Sheep", 8) == 0;
 }
 
-SheepScript::SheepScript(const std::string& name, char* data, int dataLength) : Asset(name)
+SheepScript::SheepScript(const std::string& name, SheepScriptBuilder& builder) : Asset(name)
 {
-    ParseFromData(data, dataLength);
+    Load(builder);
 }
 
-SheepScript::SheepScript(const std::string& name, SheepScriptBuilder& builder) : Asset(name)
+SheepScript::~SheepScript()
+{
+    delete[] mBytecode;
+}
+
+void SheepScript::Load(uint8_t* data, uint32_t dataLength)
+{
+    // If the data is already compiled, we can just parse it directly.
+    if(IsSheepDataCompiled(data, dataLength))
+    {
+        ParseFromData(data, dataLength);
+        return;
+    }
+
+    // If the data is in uncompiled text format, we must compile it!
+    SheepCompiler compiler;
+    imstream stream(reinterpret_cast<char*>(data), dataLength);
+    if(compiler.Compile(GetNameNoExtension(), stream))
+    {
+        Load(compiler.GetCompiledBuilder());
+    }
+}
+
+void SheepScript::Load(const SheepScriptBuilder& builder)
 {
     // Just copy these directly.
     mSysImports = builder.GetSysImports();
     mStringConsts = builder.GetStringConsts();
     mVariables = builder.GetVariables();
     mFunctions = builder.GetFunctions();
-	
+
     // Bytecode needs to convert from std::vector to byte array.
-    std::vector<char> bytecodeVec = builder.GetBytecode();
-    mBytecodeLength = (int)bytecodeVec.size();
+    mBytecodeLength = builder.GetBytecode().size();
     mBytecode = new char[mBytecodeLength];
-    std::copy(bytecodeVec.begin(), bytecodeVec.end(), mBytecode);
+    std::copy(builder.GetBytecode().begin(), builder.GetBytecode().end(), mBytecode);
 }
 
 SysFuncImport* SheepScript::GetSysImport(int index)
@@ -82,7 +106,7 @@ void SheepScript::Dump()
     std::cout << "--------------------------------------------------------------------------" << std::endl;
 }
 
-void SheepScript::ParseFromData(char *data, int dataLength)
+void SheepScript::ParseFromData(uint8_t* data, uint32_t dataLength)
 {
     BinaryReader reader(data, dataLength);
     
@@ -117,7 +141,7 @@ void SheepScript::ParseFromData(char *data, int dataLength)
         reader.Seek(offset);
 
         std::string section;
-        reader.ReadStringBuffer(12, section);
+        reader.ReadString(12, section);
         if(section == "SysImports")
         {
             ParseSysImportsSection(reader);
@@ -165,7 +189,7 @@ void SheepScript::ParseSysImportsSection(BinaryReader& reader)
         
         // Read in name from length.
         // Length is always one more, due to null terminator.
-        reader.ReadShortString(import.name);
+        reader.ReadString16(import.name);
         reader.Skip(1); // skip null terminator, baked into data
         
         import.returnType = reader.ReadSByte();
@@ -231,7 +255,7 @@ void SheepScript::ParseVariablesSection(BinaryReader& reader)
         // Read in name from length.
         // Length is always one more, due to null terminator.
         std::string name;
-        reader.ReadShortString(name);
+        reader.ReadString16(name);
         reader.Skip(1); // skip null terminator, baked into data
         
         // Type is either int, float, or string.
@@ -277,7 +301,7 @@ void SheepScript::ParseFunctionsSection(BinaryReader& reader)
         // Read in name from length.
         // Length is always one more, due to null terminator.
         std::string name;
-        reader.ReadShortString(name);
+        reader.ReadString16(name);
         reader.Skip(1); // skip null terminator, baked into data
 		
 		// 2 bytes: unknown
@@ -313,8 +337,9 @@ void SheepScript::ParseCodeSection(BinaryReader& reader)
     reader.ReadInt();
     
     // The rest is just bytecode!
+    assert(mBytecode == nullptr);
     mBytecode = new char[mBytecodeLength];
-    reader.Read(mBytecode, mBytecodeLength);
+    reader.Read(reinterpret_cast<uint8_t*>(mBytecode), mBytecodeLength);
 }
 
 /**

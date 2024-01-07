@@ -4,10 +4,10 @@
 // Functions to perform platform-specific file system operations.
 //
 #pragma once
+#include <cstdint>
 #include <iostream>
 #include <string>
 
-#include "Atomics.h"
 #include "Platform.h"
 #include "StringTokenizer.h"
 
@@ -50,10 +50,11 @@ namespace Path
 
     /**
      * Given a file name or path, returns true if an extension is present.
+     * If an expected extension is provided, only returns true if THAT SPECIFIC extension is present.
      * Any path with a "." in the last token is considered to have an extension.
      * Ex: "Assets/Data/Blah" has no extension, "Assets/Data/Blah.x" does have an extension.
      */
-    bool HasExtension(const std::string& path);
+    bool HasExtension(const std::string& path, const std::string& expectedExtension = "");
 
     /**
      * Removes the extension from the file name.
@@ -107,10 +108,10 @@ namespace File
     /**
      * Determines a file's size in bytes.
      */
-    int64 Size(const std::string& filePath);
+    uint64_t Size(const std::string& filePath);
 
     /**
      * Reads file contents into a buffer.
      */
-    char* ReadIntoBuffer(const std::string& filePath, uint32& outBufferSize);
+    uint8_t* ReadIntoBuffer(const std::string& filePath, uint32_t& outBufferSize);
 }

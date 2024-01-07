@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
 
-project(gengine VERSION 0.0.7
+project(gengine VERSION 0.0.8
                 DESCRIPTION "Gabriel Knight 3 game engine"
                 LANGUAGES C CXX)
 
@@ -17,6 +17,9 @@ set(CMAKE_XCODE_GENERATE_SCHEME TRUE)
 # Important to put the generated file in BINARY_DIR - otherwise, we may have conflicts if we create multiple CMake target projects in the same repo.
 include(CheckIncludeFile)
 CHECK_INCLUDE_FILE(sys/stat.h HAVE_STAT_H)
+CHECK_INCLUDE_FILE(dirent.h HAVE_DIRENT_H)
+CHECK_INCLUDE_FILE(unistd.h HAVE_UNISTD_H)
+CHECK_INCLUDE_FILE(limits.h HAVE_LIMITS_H)
 configure_file("${PROJECT_SOURCE_DIR}/Source/Platform/BuildEnv.h.in" "${CMAKE_CURRENT_BINARY_DIR}/BuildEnv.h")
 
 # Get all cpp/h files in the Source directory using GLOB.
@@ -48,8 +51,10 @@ target_include_directories(gk3 PRIVATE
     Source/GK3/Actions
     Source/GK3/Actors
     Source/GK3/Animation
+    Source/GK3/Mechanisms
     Source/GK3/Scene
     Source/GK3/UI
+    Source/GK3/UI/Sidney
     Source/Input
     Source/IO
     Source/Math
@@ -57,6 +62,7 @@ target_include_directories(gk3 PRIVATE
     Source/Platform
     Source/Primitives
     Source/Rendering
+    Source/Rendering/Graphics
     Source/Reports
     Source/Sheep
     Source/Sheep/API
@@ -86,18 +92,64 @@ target_include_directories(gk3 PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
+# Common defines.
+target_compile_definitions(gk3 PRIVATE
+    $<$<CONFIG:Debug>:DEBUG>
+)
+
 # Warning/error settings.
 if(MSVC)
-    #target_compile_options(gk3 PRIVATE /W3 /wd4065)
-    target_compile_options(gk3 PRIVATE /wd26812)
-else()
+    target_compile_options(gk3 PRIVATE /Wall
+        /wd4061 # Disable "unhandled case in switch with default" warning
+        /wd4065 # Disable "switch contains default and no cases" warning
+        /wd4100 # Disable "unreferenced formal parameter" warning
+        /wd4191 # Disable "unsafe conversion" warning (used by imgui)
+        /wd4242
+        /wd4263 /wd4264 # Disable "virtual function in base class has same name & different signature" warning
+        /wd4355 # Disable "this used in base member init list" warning
+        /wd4365
+        /wd4505 # Disable "unreferenced function with internal linkage" warning
+        /wd4514 # Disable "unused function" warning
+        /wd4625 # Disable "copy constructor implicitly deleted" warning
+        /wd4626 # Disable "assignment operator implicitly deleted" warning
+        /wd4668 # Disable "preprocessor macro not defined" warning
+        /wd4710 # Disable "function was not inlined" warning
+        /wd4774 # Disable "snprintf format not literal" warning (though this might be good to fix)
+        /wd4820 # Disable "padding added" warning
+        /wd5026 # Disable "move constructor implicitly deleted" warning
+        /wd5027 # Disable "move assignment operator implicitly deleted" warning
+        /wd5039 # Disable "pointer to potentially throwing extern c function" warning
+        /wd5045 # Disable "Spectre mitigation" warning
+        /wd5219 # Disable "implicit conversion from x to y" warning
+        /wd5245 # Disable "unreferenced function with internal linkage has been removed" warning
+    )
+    #target_compile_options(gk3 PRIVATE /wd26812)
+elseif(APPLE)
     #target_compile_options(gk3 PRIVATE -Wall -Wextra -pedantic)
+else() # Linux
+    target_compile_options(gk3 PRIVATE 
+        -Wall
+        -Wno-comment            # Disable comment formatting warnings.
+        -Wno-unused-function    # Disable unused function warnings.
+
+        -Wextra
+        -Wno-unused-parameter   # Disable unused function parameter warnings.
+    )
 endif()
 
 # Other compiler flags
 if(MSVC)
+    target_compile_definitions(gk3 PRIVATE
+        _CRT_SECURE_NO_WARNINGS     # Don't display warnings for using unsecure standard C/C++ functions.
+    )
     target_compile_options(gk3 PRIVATE 
-        /MP     # Multithreaded compiling - it's faster
+        /fp:fast    # Optimize floating point math for speed.
+        /JMC        # Enable "Just My Code" to skip system/library code when debugging.
+        /MP         # Multithreaded compiling - it's faster.
+    )
+elseif(APPLE)
+    target_compile_options(gk3 PRIVATE
+        $<$<CONFIG:RelWithDebInfo>:-O>  # Workaround: currently seeing crashes and performance issues with -O2 optimization; use -O1 instead.
     )
 endif()
 
@@ -179,6 +231,29 @@ elseif(APPLE)
         ${COREFOUNDATION_LIB}
         ${OPENGL_LIB}
     )
+else() # Linux
+    target_include_directories(gk3 PRIVATE
+        Libraries/SDL/linux/include
+    )
+
+    # Specify library search directories.
+    target_link_directories(gk3 PRIVATE
+        Libraries/ffmpeg/lib/linux
+        Libraries/fmod/lib/linux
+        Libraries/GLEW/lib/linux
+        Libraries/SDL/linux/lib
+        Libraries/zlib/lib/linux
+    )
+
+    # Link all the libraries.
+    target_link_libraries(gk3 
+        avcodec avformat avutil swresample swscale  # ffmpeg
+        fmod                                        # fmod
+        GLEW                                        # GLEW
+        z                                           # zlib
+        SDL2                                        # SDL
+        GL
+    )
 endif()
 
 # Other project settings
@@ -241,6 +316,18 @@ elseif(APPLE)
         COMMAND ${PLAT_SOURCE_DIR}/Scripts/PostBuild.sh ${PLAT_SOURCE_DIR} app
         VERBATIM
     )
+else() # Linux
+    add_custom_command(TARGET gk3
+        POST_BUILD
+#        COMMAND ln -fs ${PLAT_SOURCE_DIR}/Assets ${PLAT_BINARY_DIR}
+#        COMMAND ln -fs ${PLAT_SOURCE_DIR}/Data ${PLAT_BINARY_DIR}
+        #COMMAND ${CMAKE_COMMAND} -E copy ${PLAT_SOURCE_DIR}/Libraries/ffmpeg/lib/linux/libavcodec.so ${PLAT_BINARY_DIR}
+        #COMMAND ${CMAKE_COMMAND} -E copy ${PLAT_SOURCE_DIR}/Libraries/ffmpeg/lib/linux/libavformat.so ${PLAT_BINARY_DIR}
+        #COMMAND ${CMAKE_COMMAND} -E copy ${PLAT_SOURCE_DIR}/Libraries/ffmpeg/lib/linux/libavutil.so ${PLAT_BINARY_DIR}
+        #COMMAND ${CMAKE_COMMAND} -E copy ${PLAT_SOURCE_DIR}/Libraries/ffmpeg/lib/linux/libswresample.so ${PLAT_BINARY_DIR}
+        #COMMAND ${CMAKE_COMMAND} -E copy ${PLAT_SOURCE_DIR}/Libraries/ffmpeg/lib/linux/libswscale.so ${PLAT_BINARY_DIR}
+        VERBATIM
+    )
 endif()
 
 # Create deploy target, which creates a final release of the game.
@@ -256,7 +343,13 @@ if(WIN32)
 elseif(APPLE)
     add_custom_command(TARGET deploy
         POST_BUILD
-        COMMAND ${PLAT_SOURCE_DIR}/Scripts/Deploy.sh ${PLAT_SOURCE_DIR} ${PLAT_BINARY_DIR}/$<CONFIG> ${PLAT_SOURCE_DIR}/Bin/$<CONFIG> ${PROJECT_VERSION}
+        COMMAND ${PLAT_SOURCE_DIR}/Scripts/Deploy.sh ${PLAT_SOURCE_DIR} ${PLAT_BINARY_DIR}/$<CONFIG> ${PLAT_SOURCE_DIR}/Bin/$<CONFIG> ${PROJECT_VERSION} Mac
+        VERBATIM
+    )
+else() # Linux
+    add_custom_command(TARGET deploy
+        POST_BUILD
+        COMMAND ${PLAT_SOURCE_DIR}/Scripts/Deploy.sh ${PLAT_SOURCE_DIR} ${PLAT_BINARY_DIR} ${PLAT_SOURCE_DIR}/Bin/$<CONFIG> ${PROJECT_VERSION} Linux
         VERBATIM
     )
 endif()
@@ -295,4 +388,3 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${IMGUI_SOURCES})
 
 # Add tests subdirectory (creates the "tests" target).
 add_subdirectory(Tests)
-

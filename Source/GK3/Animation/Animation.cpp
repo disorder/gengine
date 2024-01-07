@@ -3,12 +3,25 @@
 #include <cctype>
 
 #include "AnimationNodes.h"
+#include "AssetManager.h"
+#include "FileSystem.h"
 #include "IniParser.h"
-#include "Services.h"
 #include "StringUtil.h"
 #include "VertexAnimation.h"
 
-Animation::Animation(const std::string& name, char* data, int dataLength) : Asset(name)
+Animation::~Animation()
+{
+    // Be sure to delete dynamically allocated memory.
+    for(auto& frameEntry : mFrames)
+    {
+        for(auto& frameAnimNode : frameEntry.second)
+        {
+            delete frameAnimNode;
+        }
+    }
+}
+
+void Animation::Load(uint8_t* data, uint32_t dataLength)
 {
     ParseFromData(data, dataLength);
 }
@@ -36,8 +49,10 @@ VertexAnimNode* Animation::GetVertexAnimationOnFrameForModel(int frameNumber, co
 	return nullptr;
 }
 
-void Animation::ParseFromData(char *data, int dataLength)
+void Animation::ParseFromData(uint8_t* data, uint32_t dataLength)
 {
+    bool isYak = Path::HasExtension(GetName(), ".yak");
+
     IniParser parser(data, dataLength);
     IniSection section;
     while(parser.ReadNextSection(section))
@@ -55,7 +70,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         {
 			// First line is number of action entries...but we can just determine that from the number of lines!
 			// Read in 2+ lines as actions.
-            for(int i = 1; i < section.lines.size(); ++i)
+            for(size_t i = 1; i < section.lines.size(); ++i)
             {
 				IniLine& line = section.lines[i];
 				
@@ -67,14 +82,31 @@ void Animation::ParseFromData(char *data, int dataLength)
                 int frameNumber = line.entries[0].GetValueAsInt();
                 
 				// Vertex animation must be specified.
-				VertexAnimation* vertexAnim = Services::GetAssets()->LoadVertexAnimation(line.entries[1].key);
-				
+				VertexAnimation* vertexAnim = gAssetManager.LoadVertexAnimation(line.entries[1].key, GetScope());
+                if(vertexAnim == nullptr)
+                {
+                    printf("Failed to load vertex animation %s!\n", line.entries[1].key.c_str());
+                    continue;
+                }
+                
 				// Create and push back the animation node. Remaining fields are optional.
                 VertexAnimNode* node = new VertexAnimNode();
                 node->frameNumber = frameNumber;
 				node->vertexAnimation = vertexAnim;
-                mFrames[frameNumber].push_back(node);
-				mVertexAnimNodes.push_back(node);
+
+                //HACK: If this is a facing direction helper (DOR), make sure it animated *before* other objects.
+                //HACK: Some logic in GKActor for calculating facing direction only works if the DOR gets sampled first.
+                bool isDor = StringUtil::StartsWithIgnoreCase(vertexAnim->GetName(), "DOR_");
+                if(isDor)
+                {
+                    mFrames[frameNumber].insert(mFrames[frameNumber].begin(), node);
+                    mVertexAnimNodes.insert(mVertexAnimNodes.begin(), node);
+                }
+                else
+                {
+                    mFrames[frameNumber].push_back(node);
+                    mVertexAnimNodes.push_back(node);
+                }
 
                 //TODO: Some animations have a keyword here (ABSOLUTE). Which I guess indicates that this is an absolute animation.
                 //TODO: I'm guessing this might be shorthand for "0, 0, 0, 0, 0, 0, 0, 0" which is frequently used for absolute anims.
@@ -109,7 +141,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         else if(StringUtil::EqualsIgnoreCase(section.name, "STEXTURES"))
         {
 			// First line is number of entries...but we can just determine that from the number of lines!
-			for(int i = 1; i < section.lines.size(); ++i)
+			for(size_t i = 1; i < section.lines.size(); ++i)
             {
 				IniLine& line = section.lines[i];
 				
@@ -139,7 +171,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         {
 			// First line is number of entries...but we can just determine that from the number of lines!
 			// Read in 2+ lines as actions.
-            for(int i = 1; i < section.lines.size(); i++)
+            for(size_t i = 1; i < section.lines.size(); i++)
             {
                 IniLine& line = section.lines[i];
                 
@@ -168,7 +200,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         {
 			// First line is number of entries...but we can just determine that from the number of lines!
 			// Read in 2+ lines as actions.
-            for(int i = 1; i < section.lines.size(); i++)
+            for(size_t i = 1; i < section.lines.size(); i++)
             {
                 IniLine& line = section.lines[i];
                 
@@ -201,7 +233,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         {
 			// First line is number of entries...but we can just determine that from the number of lines!
 			// Read in 2+ lines as actions.
-            for(int i = 1; i < section.lines.size(); ++i)
+            for(size_t i = 1; i < section.lines.size(); ++i)
             {
                 IniLine& line = section.lines[i];
 
@@ -236,7 +268,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         {
 			// First line is number of entries...but we can just determine that from the number of lines!
 			// Read in lines 2+ as sounds.
-            for(int i = 1; i < section.lines.size(); i++)
+            for(size_t i = 1; i < section.lines.size(); i++)
             {
                 IniLine& line = section.lines[i];
                 
@@ -255,45 +287,58 @@ void Animation::ParseFromData(char *data, int dataLength)
                 // Read the volume.
                 int volume = line.entries[2].GetValueAsInt();
 				
-				// Create node here - remaining entries are optional.
+				// Create node.
 				SoundAnimNode* node = new SoundAnimNode();
 				node->frameNumber = frameNumber;
-				node->audio = Services::GetAssets()->LoadAudio(soundName);
+                if(isYak)
+                {
+                    node->audio = gAssetManager.LoadAudio(soundName, AssetScope::Scene);
+                }
+                else
+                {
+                    node->audio = gAssetManager.LoadAudio(soundName);
+                }
 				node->volume = volume;
-				mFrames[frameNumber].push_back(node);
-				
-				// Below here, arguments are optional.
-				if(line.entries.size() < 4) { continue; }
-			
-                // If any optional arguments are present, this is a 3D sound.
-                node->is3D = true;
-                
-				// HACK: the next argument might be a model name OR a sound position (x, y, z).
-				// To determine, let's just see if the first char is a digit.
-				// Probably a better way to do this is add IniParser logic to check entry type (int, float, string, etc).
-				// Also, a position requires at least 6 arguments total.
-				bool usesPosition = std::isdigit(line.entries[3].value[0]) && line.entries.size() >= 6;
-				int distIndex = 0;
-				if(!usesPosition)
-				{
-					node->modelName = line.entries[3].key;
-					distIndex = 4;
-				}
-				else
-				{
-					int x = line.entries[3].GetValueAsInt();
-				    int y = line.entries[4].GetValueAsInt();
-				    int z = line.entries[5].GetValueAsInt();
-				    node->position = Vector3(x, y, z);
-					distIndex = 6;
-				}
-				
-				// Read in min/max distance for sound, if entries are present.
-				if(line.entries.size() <= distIndex) { continue; }
-                node->minDistance = line.entries[distIndex].GetValueAsInt();
-				
-				if(line.entries.size() <= (distIndex + 1)) { continue; }
-                node->maxDistance = line.entries[distIndex + 1].GetValueAsInt();
+
+                // Remaining arguments are optional.
+                if(line.entries.size() >= 4)
+                {
+                    // If any optional arguments are present, this is a 3D sound.
+                    node->is3d = true;
+
+                    // HACK: the next argument might be a model name OR a sound position (x, y, z).
+                    // To determine, let's just see if the first char is a digit.
+                    // Probably a better way to do this is add IniParser logic to check entry type (int, float, string, etc).
+                    // Also, a position requires at least 6 arguments total.
+                    bool usesPosition = std::isdigit(line.entries[3].value[0]) && line.entries.size() >= 6;
+                    size_t distIndex = 0;
+                    if(!usesPosition)
+                    {
+                        node->modelName = line.entries[3].key;
+                        distIndex = 4;
+                    }
+                    else
+                    {
+                        float x = line.entries[3].GetValueAsFloat();
+                        float y = line.entries[4].GetValueAsFloat();
+                        float z = line.entries[5].GetValueAsFloat();
+                        node->position = Vector3(x, y, z);
+                        distIndex = 6;
+                    }
+
+                    // Read in min/max distance for sound, if entries are present.
+                    if(distIndex < line.entries.size())
+                    {
+                        node->minDistance = line.entries[distIndex].GetValueAsFloat();
+                    }
+                    if(distIndex + 1 < line.entries.size())
+                    {
+                        node->maxDistance = line.entries[distIndex + 1].GetValueAsFloat();
+                    }
+                }
+
+                // Put node in frames map.
+                mFrames[frameNumber].push_back(node);
             }
         }
 		// Allows specifying of additional options that affect the entire animation.
@@ -301,7 +346,7 @@ void Animation::ParseFromData(char *data, int dataLength)
         {
 			// First line is number of entries...but we can just determine that from the number of lines!
 			// Read in 2+ lines as actions.
-            for(int i = 1; i < section.lines.size(); i++)
+            for(size_t i = 1; i < section.lines.size(); i++)
             {
 				IniLine& line = section.lines[i];
 				
@@ -336,7 +381,7 @@ void Animation::ParseFromData(char *data, int dataLength)
 		// to isolate extremely specific to GK3 stuff here?
         else if(StringUtil::EqualsIgnoreCase(section.name, "GK3"))
         {
-            for(int i = 1; i < section.lines.size(); i++)
+            for(size_t i = 1; i < section.lines.size(); i++)
             {
                 IniLine& line = section.lines[i];
                 
@@ -347,53 +392,69 @@ void Animation::ParseFromData(char *data, int dataLength)
 				std::string keyword = line.entries[1].key;
                 if(StringUtil::EqualsIgnoreCase(keyword, "FOOTSTEP"))
                 {
-                    std::string actorNoun = line.entries[2].key;
-					
-					// Create and add node.
-					FootstepAnimNode* node = new FootstepAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] FOOTSTEP [NOUN]
+                    if(line.entries.size() >= 3)
+                    {
+                        std::string actorNoun = line.entries[2].key;
+
+                        // Create and add node.
+                        FootstepAnimNode* node = new FootstepAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "FOOTSCUFF"))
                 {
-                    std::string actorNoun = line.entries[2].key;
-					
-					// Create and add node.
-					FootscuffAnimNode* node = new FootscuffAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] FOOTSCUFF [NOUN]
+                    if(line.entries.size() >= 3)
+                    {
+                        std::string actorNoun = line.entries[2].key;
+
+                        // Create and add node.
+                        FootscuffAnimNode* node = new FootscuffAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "STOPSOUNDTRACK"))
                 {
-                    std::string soundtrackName = line.entries[2].key;
-					
-					// Create and add node.
-					StopSoundtrackAnimNode* node = new StopSoundtrackAnimNode();
-                    node->frameNumber = frameNumber;
-					node->soundtrackName = soundtrackName;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] STOPSOUNDTRACK [STK_NAME]
+                    if(line.entries.size() >= 3)
+                    {
+                        std::string soundtrackName = line.entries[2].key;
+
+                        // Create and add node.
+                        StopSoundtrackAnimNode* node = new StopSoundtrackAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->soundtrackName = soundtrackName;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "PLAYSOUNDTRACK"))
                 {
-                    std::string soundtrackName = line.entries[2].key;
-					
-					// Create and add node.
-					PlaySoundtrackAnimNode* node = new PlaySoundtrackAnimNode();
-                    node->frameNumber = frameNumber;
-					node->soundtrackName = soundtrackName;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] PLAYSOUNDTRACK [STK_NAME]
+                    if(line.entries.size() >= 3)
+                    {
+                        // Create and add node.
+                        PlaySoundtrackAnimNode* node = new PlaySoundtrackAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->soundtrackName = line.entries[2].key;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "PLAYSOUNDTRACKTBS"))
                 {
-                    std::string soundtrackName = line.entries[2].key;
-					
-					// Create and add node.
-					PlaySoundtrackAnimNode* node = new PlaySoundtrackAnimNode();
-                    node->frameNumber = frameNumber;
-					node->soundtrackName = soundtrackName;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] PLAYSOUNDTRACKTBS [STK_NAME]
+                    if(line.entries.size() >= 3)
+                    {
+                        // Create and add node.
+                        PlaySoundtrackAnimNode* node = new PlaySoundtrackAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->soundtrackName = line.entries[2].key;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "STOPALLSOUNDTRACKS"))
                 {
@@ -404,199 +465,246 @@ void Animation::ParseFromData(char *data, int dataLength)
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "CAMERA"))
                 {
-                    std::string cameraPositionName = line.entries[2].key;
-					
-					// Create and add node.
-					CameraAnimNode* node = new CameraAnimNode();
-                    node->frameNumber = frameNumber;
-					node->cameraPositionName = cameraPositionName;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] CAMERA [CAM_NAME] (GLIDE)
+                    if(line.entries.size() >= 3)
+                    {
+                        // Create and add node.
+                        CameraAnimNode* node = new CameraAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->cameraPositionName = line.entries[2].key;
 
-                    //TODO: Some entries have a 4th keyword (glide) - probably indicates whether camera cuts or glides to position.
+                        // If there is any additional GLIDE keyword, it means the camera should glide.
+                        for(size_t j = 3; j < line.entries.size(); ++j)
+                        {
+                            if(StringUtil::EqualsIgnoreCase(line.entries[j].key, "GLIDE"))
+                            {
+                                node->glide = true;
+                                break;
+                            }
+                        }
+
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "LIPSYNCH"))
                 {
-                    std::string actorNoun = line.entries[2].key;
-                    std::string mouthTexName = line.entries[3].key;
-					
-					// Create and add node.
-					LipSyncAnimNode* node = new LipSyncAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					node->mouthTextureName = mouthTexName;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] LIPSYNCH [NOUN] [TEXTURE]
+                    if(line.entries.size() >= 4)
+                    {
+                        std::string actorNoun = line.entries[2].key;
+                        std::string mouthTexName = line.entries[3].key;
+
+                        // Create and add node.
+                        LipSyncAnimNode* node = new LipSyncAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        node->mouthTextureName = mouthTexName;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "FACETEX"))
                 {
-                    // Read the actor name.
-                    std::string actorNoun = line.entries[2].key;
-                    
-                    // Read texture name.
-                    // This sometimes has a forward slash in it, which
-                    // indicates "tex"/"alpha_tex".
-					std::string textureName = line.entries[3].key;
-                    
-                    // A value indicating what part of the face is changed. Always H, E, M.
-					// M = mouth
-					// E = eye
-					// H = head/forehead
-					std::string facePart = line.entries[4].key;
-					StringUtil::ToLower(facePart);
-					FaceElement faceElement = FaceElement::Mouth;
-					switch(facePart[0])
-					{
-						case 'm':
-							faceElement = FaceElement::Mouth;
-							break;
-						case 'e':
-							faceElement = FaceElement::Eyelids;
-							break;
-						case 'h':
-							faceElement = FaceElement::Forehead;
-							break;
-					}
-					
-					// Create and add node.
-					FaceTexAnimNode* node = new FaceTexAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					node->textureName = textureName;
-					node->faceElement = faceElement;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] FACETEX [NOUN] [TEXTURE] [FACE_ELEMENT]
+                    if(line.entries.size() >= 5)
+                    {
+                        // Read the actor name.
+                        std::string actorNoun = line.entries[2].key;
+
+                        // Read texture name.
+                        // This sometimes has a forward slash in it, which
+                        // indicates "tex"/"alpha_tex".
+                        std::string textureName = line.entries[3].key;
+
+                        // A value indicating what part of the face is changed. Always H, E, M.
+                        // M = mouth
+                        // E = eye
+                        // H = head/forehead
+                        std::string facePart = line.entries[4].key;
+                        StringUtil::ToLower(facePart);
+                        FaceElement faceElement = FaceElement::Mouth;
+                        switch(facePart[0])
+                        {
+                        case 'm':
+                            faceElement = FaceElement::Mouth;
+                            break;
+                        case 'e':
+                            faceElement = FaceElement::Eyelids;
+                            break;
+                        case 'h':
+                            faceElement = FaceElement::Forehead;
+                            break;
+                        }
+
+                        // Create and add node.
+                        FaceTexAnimNode* node = new FaceTexAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        node->textureName = textureName;
+                        node->faceElement = faceElement;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "UNFACETEX"))
                 {
-                    // Read the actor name.
-                    std::string actorNoun = line.entries[2].key;
-					
-					// A value indicating what part of the face is changed. Always H, E, M.
-					// M = mouth
-					// E = eye
-					// H = head/forehead
-					std::string facePart = line.entries[3].key;
-					StringUtil::ToLower(facePart);
-					FaceElement faceElement = FaceElement::Mouth;
-					switch(facePart[0])
-					{
-						case 'm':
-							faceElement = FaceElement::Mouth;
-							break;
-						case 'e':
-							faceElement = FaceElement::Eyelids;
-							break;
-						case 'h':
-							faceElement = FaceElement::Forehead;
-							break;
-					}
-					
-					// Create and add node.
-					UnFaceTexAnimNode* node = new UnFaceTexAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					node->faceElement = faceElement;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] UNFACETEX [NOUN] [FACE_ELEMENT]
+                    if(line.entries.size() >= 4)
+                    {
+                        // Read the actor name.
+                        std::string actorNoun = line.entries[2].key;
+
+                        // A value indicating what part of the face is changed. Always H, E, M.
+                        // M = mouth
+                        // E = eye
+                        // H = head/forehead
+                        std::string facePart = line.entries[3].key;
+                        StringUtil::ToLower(facePart);
+                        FaceElement faceElement = FaceElement::Mouth;
+                        switch(facePart[0])
+                        {
+                        case 'm':
+                            faceElement = FaceElement::Mouth;
+                            break;
+                        case 'e':
+                            faceElement = FaceElement::Eyelids;
+                            break;
+                        case 'h':
+                            faceElement = FaceElement::Forehead;
+                            break;
+                        }
+
+                        // Create and add node.
+                        UnFaceTexAnimNode* node = new UnFaceTexAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        node->faceElement = faceElement;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "GLANCE"))
                 {
-                    // Read the actor name.
-                    std::string actorNoun = line.entries[2].key;
-                    
-                    // X/Y/Z position. //TODO: Do z/y also need to be flipped?
-                    int x = line.entries[3].GetValueAsInt();
-					int y = line.entries[4].GetValueAsInt();
-                    int z = line.entries[5].GetValueAsInt();
-					
-					// Create and add node.
-					GlanceAnimNode* node = new GlanceAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					node->position = Vector3(x, y, z);
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] GLANCE [NOUN] [X] [Y] [Z]
+                    if(line.entries.size() >= 6)
+                    {
+                        // Read the actor name.
+                        std::string actorNoun = line.entries[2].key;
+
+                        // X/Y/Z position.
+                        float x = line.entries[3].GetValueAsFloat();
+                        float y = line.entries[4].GetValueAsFloat();
+                        float z = line.entries[5].GetValueAsFloat();
+
+                        // Create and add node.
+                        GlanceAnimNode* node = new GlanceAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        node->position = Vector3(x, y, z);
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
 				else if(StringUtil::EqualsIgnoreCase(keyword, "MOOD"))
 				{
-					// Read the actor name.
-					std::string actorNoun = line.entries[2].key;
-					
-					// Read the mood name.
-					std::string moodName = line.entries[3].key;
-					
-					// Create and add node.
-					MoodAnimNode* node = new MoodAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
-					node->moodName = moodName;
-					mFrames[frameNumber].push_back(node);
+                    // [FRAME] MOOD [NOUN] [MOOD]
+                    if(line.entries.size() >= 4)
+                    {
+                        // Read the actor name.
+                        std::string actorNoun = line.entries[2].key;
+
+                        // Read the mood name.
+                        std::string moodName = line.entries[3].key;
+
+                        // Create and add node.
+                        MoodAnimNode* node = new MoodAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        node->moodName = moodName;
+                        mFrames[frameNumber].push_back(node);
+                    }
 				}
                 else if(StringUtil::EqualsIgnoreCase(keyword, "EXPRESSION"))
                 {
-                    // Read the actor name.
-                    std::string actorNoun = line.entries[2].key;
+                    // [FRAME] EXPRESSION [NOUN] [EXPRESSION]
+                    if(line.entries.size() >= 4)
+                    {
+                        // Read the actor name.
+                        std::string actorNoun = line.entries[2].key;
 
-                    // Read the expression name.
-                    std::string expressionName = line.entries[3].key;
+                        // Read the expression name.
+                        std::string expressionName = line.entries[3].key;
 
-                    // Create and add node.
-                    ExpressionAnimNode* node = new ExpressionAnimNode();
-                    node->frameNumber = frameNumber;
-                    node->actorNoun = actorNoun;
-                    node->expressionName = expressionName;
-                    mFrames[frameNumber].push_back(node);
+                        // Create and add node.
+                        ExpressionAnimNode* node = new ExpressionAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+                        node->expressionName = expressionName;
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
 				else if(StringUtil::EqualsIgnoreCase(keyword, "SPEAKER"))
                 {
-					// Read actor name.
-					std::string actorNoun = line.entries[2].key;
-					
-					// Create and add node.
-					SpeakerAnimNode* node = new SpeakerAnimNode();
-                    node->frameNumber = frameNumber;
-					node->actorNoun = actorNoun;
+                    // [FRAME] SPEAKER [NOUN]
+                    if(line.entries.size() >= 3)
+                    {
+                        // Read actor name.
+                        std::string actorNoun = line.entries[2].key;
 
-                    // When CAPTION and SPEAKER nodes exist on the same frame, it's important the SPEAKER nodes are processed first.
-                    // To help with that, we'll always put SPEAKER nodes at the beginning of the node list.
-                    mFrames[frameNumber].insert(mFrames[frameNumber].begin(), node);
+                        // Create and add node.
+                        SpeakerAnimNode* node = new SpeakerAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->actorNoun = actorNoun;
+
+                        // When CAPTION and SPEAKER nodes exist on the same frame, it's important the SPEAKER nodes are processed first.
+                        // To help with that, we'll always put SPEAKER nodes at the beginning of the node list.
+                        mFrames[frameNumber].insert(mFrames[frameNumber].begin(), node);
+                    }
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "CAPTION"))
                 {
-					// Read caption.
-                    // Unfortunately, the caption *may* contain commas, which interfers with the INI parser. Need to loop to populate.
-                    std::string caption = line.entries[2].key;
-                    for(int i = 3; i < line.entries.size(); ++i)
+                    // [FRAME] CAPTION [CAPTION]
+                    if(line.entries.size() >= 3)
                     {
-                        caption += ", ";
-                        caption += line.entries[i].key;
+                        // Read caption.
+                        // Unfortunately, the caption *may* contain commas, which interfers with the INI parser. Need to loop to populate.
+                        std::string caption = line.entries[2].key;
+                        for(size_t j = 3; j < line.entries.size(); ++j)
+                        {
+                            caption += ", ";
+                            caption += line.entries[j].key;
+                        }
+
+                        // Create and add node.
+                        CaptionAnimNode* node = new CaptionAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->caption = caption;
+                        mFrames[frameNumber].push_back(node);
                     }
-					
-					// Create and add node.
-					CaptionAnimNode* node = new CaptionAnimNode();
-                    node->frameNumber = frameNumber;
-					node->caption = caption;
-					mFrames[frameNumber].push_back(node);
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "SPEAKERCAPTION"))
                 {
-					// Read end frame.
-					int endFrame = line.entries[2].GetValueAsInt();
-					
-					// Read actor who is doing the caption.
-					std::string actorNoun = line.entries[3].key;
-					
-					// Read caption.
-                    // Unfortunately, the caption *may* contain commas, which interfers with the INI parser. Need to loop to populate.
-                    std::string caption = line.entries[3].key;
-                    for(int i = 4; i < line.entries.size(); ++i)
+                    // [FRAME] SPEAKERCAPTION [END_FRAME] [NOUN]
+                    if(line.entries.size() >= 4)
                     {
-                        caption += ", ";
-                        caption += line.entries[i].key;
+                        // Read end frame.
+                        int endFrame = line.entries[2].GetValueAsInt();
+
+                        // Read actor who is doing the caption.
+                        std::string actorNoun = line.entries[3].key;
+
+                        // Read caption.
+                        // Unfortunately, the caption *may* contain commas, which interfers with the INI parser. Need to loop to populate.
+                        std::string caption = line.entries[3].key;
+                        for(size_t j = 4; j < line.entries.size(); ++j)
+                        {
+                            caption += ", ";
+                            caption += line.entries[j].key;
+                        }
+
+                        SpeakerCaptionAnimNode* node = new SpeakerCaptionAnimNode();
+                        node->frameNumber = frameNumber;
+                        node->endFrameNumber = endFrame;
+                        node->speaker = actorNoun;
+                        node->caption = caption;
+                        mFrames[frameNumber].push_back(node);
                     }
-					
-					SpeakerCaptionAnimNode* node = new SpeakerCaptionAnimNode();
-                    node->frameNumber = frameNumber;
-					node->endFrameNumber = endFrame;
-					node->speaker = actorNoun;
-					node->caption = caption;
-					mFrames[frameNumber].push_back(node);
                 }
 				else if(StringUtil::EqualsIgnoreCase(keyword, "DIALOGUECUE"))
                 {
@@ -609,17 +717,44 @@ void Animation::ParseFromData(char *data, int dataLength)
                 }
                 else if(StringUtil::EqualsIgnoreCase(keyword, "DIALOGUE"))
                 {
-                    // Read YAK license plate (file name).
-                    DialogueAnimNode* node = new DialogueAnimNode();
-                    node->frameNumber = frameNumber;
-                    node->licensePlate = line.entries[2].key.substr(1); // Chop off the first letter of the license plate. It contains the localization char, but ignore for now.
-                    mFrames[frameNumber].push_back(node);
+                    // [FRAME] DIALOGUE [LICENSE_PLATE]
+                    if(line.entries.size() >= 3)
+                    {
+                        // Read YAK license plate (file name).
+                        DialogueAnimNode* node = new DialogueAnimNode();
+                        node->frameNumber = frameNumber;
+
+                        // ANM/MOM/YAK files *almost* always prepend the language code (E) to the license plat. *Almost* always.
+                        // Since it's not consistent however, we need to come up with a hueristic to get it working all the time...
+                        
+                        // If the first character is a number, there is no language code - use as-is.
+                        if(isdigit(line.entries[2].key[0]))
+                        {
+                            node->licensePlate = line.entries[2].key;
+                        }
+                        else if(line.entries[2].key[0] == 'C' || line.entries[2].key[0] == 'D')
+                        {
+                            // A handful of YAK files start with C or D and do not have language codes - use as-is.
+                            node->licensePlate = line.entries[2].key;
+                        }
+                        else // Appears to have a language code - remove the first character.
+                        {
+                            node->licensePlate = line.entries[2].key.substr(1);
+                        }
+                        
+                        mFrames[frameNumber].push_back(node);
+                    }
                 }
                 else
                 {
                     std::cout << "Unexpected GK3 animation keyword: " << keyword << std::endl;
                 }
             }
+        }
+        else if(StringUtil::EqualsIgnoreCase(section.name, "SETTINGS"))
+        {
+            // All MOM animations have a "SETTINGS" section, but no keys present in the section.
+            // Just putting this here to silence the unexpected header warning.
         }
         else
         {

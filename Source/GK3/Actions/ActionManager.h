@@ -11,7 +11,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "Atomics.h"
 #include "NVC.h"
 #include "StringUtil.h"
 #include "Type.h"
@@ -30,7 +29,6 @@ enum class VerbType
 
 class ActionManager
 {
-	TYPE_DECL_BASE();
 public:
     ~ActionManager();
 
@@ -50,7 +48,7 @@ public:
 	
 	// Action Execution
 	bool ExecuteAction(const std::string& noun, const std::string& verb, std::function<void(const Action*)> finishCallback = nullptr);
-	void ExecuteAction(const Action* action, std::function<void(const Action*)> finishCallback = nullptr);
+	void ExecuteAction(const Action* action, std::function<void(const Action*)> finishCallback = nullptr, bool log = true);
     void ExecuteSheepAction(const std::string& sheepName, const std::string& functionName, std::function<void(const Action*)> finishCallback = nullptr);
     void ExecuteSheepAction(const std::string& sheepScriptText, std::function<void(const Action*)> finishCallback = nullptr);
     void ExecuteCustomAction(const std::string& noun, const std::string& verb, const std::string& caseLabel,
@@ -118,7 +116,11 @@ private:
 	// A case label corresponds to a bit of SheepScript that evaluates to either true or false.
 	// Cases must be stored here (rather than in Action Sets) because cases can be shared (especially global/inventory ones).
     std::string_map_ci<SheepScriptAndText> mCaseLogic;
-	
+
+    // Tracks all Noun/Verb/Case topic combos that have been played.
+    // Comparing save files, the original game *seems* to use something like this (Member:DialogueMgr:0:mLinesPlayed) to decide if a topic is still available.
+    std::string_map_ci<std::string_map_ci<std::string_set_ci>> mPlayedTopics;
+
 	// Nouns and verbs that are currently active. Pulled out of action sets as they are loaded.
 	// We do this to support the Sheep-eval feature of specifying n$ and v$ variables as wildcards for current noun/verb.
 	// To use these, we must map each active noun/verb to an integer and back again.
@@ -142,7 +144,7 @@ private:
     std::function<void(const Action*)> mCurrentActionFinishCallback = nullptr;
     
     // What frame the current action started on.
-    uint32 mCurrentActionStartFrame = 0;
+    uint32_t mCurrentActionStartFrame = 0;
 
     // In rare cases, we may need to queue actions to execute when the current one is finished.
     // Primary use case is executing actions on a timer - if timer expires DURING another action, we need to wait until that one finishes!
@@ -158,13 +160,15 @@ private:
 	
 	// An identifier for an executing action. Increment on each execution to uniquely identify actions.6
 	// This mirrors what's output in GK3 when dumping actions.
-	uint32 mActionId = 0;
+    uint32_t mActionId = 0;
+    
+    // The field-of-view of the camera when action starts, so we can set it back after.
+    // In the original game, I observed that this is stored and reverted after an action completes.
+    float mActionStartCameraFov = 0.0f;
 	
 	// Action bar, which the player uses to perform actions on scene objects.
 	ActionBar* mActionBar = nullptr;
-
     
-	
 	// Some assets should only be loaded for certain timeblocks. The asset name indicates this (e.g. GLB_12ALL.NVC or GLB_110A.NVC).
 	// Checks asset name against current timeblock to see if the asset should be used.
 	bool IsActionSetForTimeblock(const std::string& assetName, const Timeblock& timeblock);
@@ -182,3 +186,5 @@ private:
 	// Called when an action finishes executing.
 	void OnActionExecuteFinished();
 };
+
+extern ActionManager gActionManager;

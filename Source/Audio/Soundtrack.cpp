@@ -1,17 +1,19 @@
 #include "Soundtrack.h"
 
+#include "AssetManager.h"
+#include "Audio.h"
+#include "GKObject.h"
+#include "IniParser.h"
+#include "Scene.h"
+#include "SceneManager.h"
 #include "StringUtil.h"
 
-#include "Audio.h"
-#include "IniParser.h"
-#include "Services.h"
-
-int WaitNode::Execute(AudioType soundType, SoundtrackNodeResults& outResults)
+int WaitNode::Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults)
 {
     // Since a wait node does not actually have any audio, clear the provided sound handle to reflect this.
     outResults.soundHandle = PlayingSoundHandle();
     outResults.stopMethod = StopMethod::Immediate;
-    outResults.fadeOutTimeMs = 0.0f;
+    outResults.fadeOutTimeMs = 0;
 
     // Do random check. If it fails, we don't execute.
     // But note execution count is still incremented!
@@ -27,7 +29,7 @@ int WaitNode::Execute(AudioType soundType, SoundtrackNodeResults& outResults)
     return (rand() % maxWaitTimeMs + minWaitTimeMs);
 }
 
-int SoundNode::Execute(AudioType soundType, SoundtrackNodeResults& outResults)
+int SoundNode::Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults)
 {
     // Do random check. If it fails, we don't execute.
     // But note execution count is still incremented!
@@ -35,63 +37,71 @@ int SoundNode::Execute(AudioType soundType, SoundtrackNodeResults& outResults)
     if(randomCheck > random) { return 0; }
     
     // Definitely want to play the sound, if it exists.
-    Audio* audio = Services::GetAssets()->LoadAudio(soundName);
+    Audio* audio = gAssetManager.LoadAudio(soundName, soundtrack->GetScope());
     if(audio == nullptr) { return 0; }
-    
-    // Play method differs based on sound type and whether its 3D or not.
-    switch(soundType)
-    {
-    case AudioType::Music:
-        // Going to assume music is never 3D for now...
-        outResults.soundHandle = Services::GetAudio()->PlayMusic(audio, fadeInTimeMs * 0.001f);
-        break;
 
-    case AudioType::Ambient:
-        if(is3d)
+    // Create audio play params struct.
+    PlayAudioParams playParams;
+    playParams.audio = audio;
+    playParams.audioType = soundtrack->GetSoundType();
+
+    // Fade in time is specified in milliseconds, but audio system wants it in seconds.
+    playParams.fadeInTime = fadeInTimeMs * 0.001f;
+
+    // Volume is specified as 0-100, but audio system expects 0.0-1.0.
+    playParams.volume = volume * 0.01f;
+
+    // Handle 3D parameters.
+    playParams.is3d = is3d;
+    if(is3d)
+    {
+        playParams.position = position;
+        if(!followModelName.empty())
         {
-            outResults.soundHandle = Services::GetAudio()->PlayAmbient3D(audio, position, minDist, maxDist);
+            GKObject* obj = gSceneManager.GetScene()->GetSceneObjectByModelName(followModelName);
+            if(obj != nullptr)
+            {
+                outResults.followObj = obj;
+                playParams.position = obj->GetAudioPosition();
+            }
         }
-        else
-        {
-            outResults.soundHandle = Services::GetAudio()->PlayAmbient(audio, fadeInTimeMs * 0.001f);
-        }
-        break;
-        
-    case AudioType::SFX:
-        if(is3d)
-        {
-            outResults.soundHandle = Services::GetAudio()->PlaySFX3D(audio, position, minDist, maxDist);
-        }
-        else
-        {
-            outResults.soundHandle = Services::GetAudio()->PlaySFX(audio);
-        }
-        break;
-        
-    case AudioType::VO:
-        if(is3d)
-        {
-            outResults.soundHandle = Services::GetAudio()->PlayVO3D(audio, position, minDist, maxDist);
-        }
-        else
-        {
-            outResults.soundHandle = Services::GetAudio()->PlayVO(audio);
-        }
+
+        playParams.minDist = minDist;
+        playParams.maxDist = maxDist;
     }
 
+    // Set looping or not.
+    playParams.loopCount = loop ? -1 : 0;
+
+    // Get the sound playing!
+    outResults.soundHandle = gAudioManager.Play(playParams);
+    
     // Let the caller know the desired stop method, in case the soundtrack needs to stop while this node is playing.
     outResults.stopMethod = stopMethod;
     outResults.fadeOutTimeMs = fadeOutTimeMs;
-    
-    // Set sound's volume.
-    // Volume is 0-100, but audio system expects 0.0-1.0.
-    outResults.soundHandle.SetVolume(volume * 0.01f);
     
     // Return audio length. Gotta convert seconds to milliseconds.
     return (int)(audio->GetDuration() * 1000.0f);
 }
 
-Soundtrack::Soundtrack(const std::string& name, char* data, int dataLength) : Asset(name)
+int PrsNode::Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults)
+{
+    if(soundNodes.size() == 0) { return 0; }
+
+    int randomIndex = rand() % soundNodes.size();
+    return soundNodes[randomIndex]->Execute(soundtrack, outResults);
+}
+
+Soundtrack::~Soundtrack()
+{
+    // Delete dynamically allocated nodes.
+    for(auto& node : mNodes)
+    {
+        delete node;
+    }
+}
+
+void Soundtrack::Load(uint8_t* data, uint32_t dataLength)
 {
     IniParser parser(data, dataLength);
     IniSection section;
@@ -214,7 +224,7 @@ SoundNode* Soundtrack::ParseSoundNodeFromSection(IniSection& section)
         }
         else if(StringUtil::EqualsIgnoreCase(entry.key, "Loop"))
         {
-            node->loop = entry.GetValueAsInt();
+            node->loop = entry.GetValueAsInt() != 0;
         }
         else if(StringUtil::EqualsIgnoreCase(entry.key, "FadeInMs"))
         {
@@ -247,15 +257,15 @@ SoundNode* Soundtrack::ParseSoundNodeFromSection(IniSection& section)
         }
         else if(StringUtil::EqualsIgnoreCase(entry.key, "3D"))
         {
-            node->is3d = entry.GetValueAsInt();
+            node->is3d = entry.GetValueAsInt() != 0;
         }
         else if(StringUtil::EqualsIgnoreCase(entry.key, "MinDist"))
         {
-            node->minDist = entry.GetValueAsInt();
+            node->minDist = entry.GetValueAsFloat();
         }
         else if(StringUtil::EqualsIgnoreCase(entry.key, "MaxDist"))
         {
-            node->maxDist = entry.GetValueAsInt();
+            node->maxDist = entry.GetValueAsFloat();
         }
         else if(StringUtil::EqualsIgnoreCase(entry.key, "X"))
         {

@@ -24,8 +24,8 @@ BarnFile::BarnFile(const std::string& filePath) :
     
 	// 8 bytes: two specific 4-byte ints must appear at the beginning of the file.
     // In text form, this is a string "GK3!Barn".
-    unsigned int gameIdentifier = mReader.ReadUInt();
-    unsigned int barnIdentifier = mReader.ReadUInt();
+    uint32_t gameIdentifier = mReader.ReadUInt();
+    uint32_t barnIdentifier = mReader.ReadUInt();
     if(gameIdentifier != kGameIdentifier && barnIdentifier != kBarnIdentifier)
     {
 		std::cout << "Invalid file type!" << std::endl;
@@ -39,7 +39,7 @@ BarnFile::BarnFile(const std::string& filePath) :
     
     // This value indicates the offset past the file header data to what I'd
     // call the "table of contents" or "toc".
-    unsigned int tocOffset = mReader.ReadUInt();
+    uint32_t tocOffset = mReader.ReadUInt();
 
     // This additional header data can be read in if desired, but it
     // isn't really relevant to the file functionality.
@@ -80,7 +80,7 @@ BarnFile::BarnFile(const std::string& filePath) :
         // 2-bytes: unknown variable value.
         mReader.ReadShort();
         
-        // Copyright notice!
+        // Copyright notice
         char copyright[65];
         mReader.Read(copyright, 64);
         copyright[64] = '\0';
@@ -92,29 +92,29 @@ BarnFile::BarnFile(const std::string& filePath) :
     mReader.Seek(tocOffset);
     
     // First value in TOC is number of TOC entries.
-    unsigned int tocEntryCount = mReader.ReadUInt();
+    uint32_t tocEntryCount = mReader.ReadUInt();
     
     // Each toc entry will specify a header offset and a data offset.
-	std::vector<unsigned int> headerOffsets;
+	std::vector<uint32_t> headerOffsets;
     headerOffsets.reserve(tocEntryCount);
     
-	std::vector<unsigned int> dataOffsets;
+	std::vector<uint32_t> dataOffsets;
     dataOffsets.reserve(tocEntryCount);
     
     // For each toc entry, read in relevant data.
-    for(int i = 0; i < tocEntryCount; ++i)
+    for(uint32_t i = 0; i < tocEntryCount; ++i)
     {
         // The type is either "DDir" or "Data".
         // DDir specifies a directory of assets.
         // Data specifies file offset to start reading actual data.
-        unsigned int type = mReader.ReadUInt();
+        uint32_t type = mReader.ReadUInt();
         
         // Some unknown values.
         mReader.Skip(16);
         
         // Read header and data offsets.
-        unsigned int headerOffset = mReader.ReadUInt();
-        unsigned int dataOffset = mReader.ReadUInt();
+        uint32_t headerOffset = mReader.ReadUInt();
+        uint32_t dataOffset = mReader.ReadUInt();
         
         // For DDir, we'll save the offsets so we can iterate over them below.
         // For Data, we'll just save the data offset value.
@@ -132,7 +132,7 @@ BarnFile::BarnFile(const std::string& filePath) :
     // Now we need to iterate over each header/data offset pair in turn.
     // The header specifies data that is common to all assets in the data section.
     mReferencedBarns.resize(tocEntryCount);
-    for(int i = 0; i < headerOffsets.size(); ++i)
+    for(size_t i = 0; i < headerOffsets.size(); ++i)
     {
         mReader.Seek(headerOffsets[i]);
         
@@ -140,7 +140,7 @@ BarnFile::BarnFile(const std::string& filePath) :
         // a Barn file can contain "pointers" to assets in other Barn files.
         // If this name is empty, it means the asset is contained within THIS Barn file.
         // However, if the name isn't empty, it means the asset is in another Barn file.
-        mReader.ReadStringBuffer(32, mReferencedBarns[i]);
+        mReader.ReadString(32, mReferencedBarns[i]);
         bool isPointer = !mReferencedBarns[i].empty();
 
         // 4 bytes - unknown value
@@ -148,9 +148,9 @@ BarnFile::BarnFile(const std::string& filePath) :
         // 4 bytes - unknown value
         mReader.Skip(48);
 
-        int numAssets = mReader.ReadUInt();
+        uint32_t numAssets = mReader.ReadUInt();
 		mReader.Seek(dataOffsets[i]);
-        for(int j = 0; j < numAssets; ++j)
+        for(uint32_t j = 0; j < numAssets; ++j)
         {
             BarnAsset asset;
             
@@ -172,17 +172,17 @@ BarnFile::BarnFile(const std::string& filePath) :
             mReader.Skip(5);
             
             // Read in compression type.
-            asset.compressionType = (CompressionType)mReader.ReadByte();
+            asset.compressionType = static_cast<CompressionType>(mReader.ReadByte());
             
             // Compression type 3 should just be treated as type none.
             // Not sure if type 3 is actually different in some way?
-            if((int)asset.compressionType == 3)
+            if(static_cast<int>(asset.compressionType) == 3)
             {
                 asset.compressionType = CompressionType::None;
             }
 			
             // Read in asset name.
-            mReader.ReadTinyString(asset.name);
+            mReader.ReadString8(asset.name);
             mReader.Skip(1); // null terminator is also present - skip it
             //std::cout << asset.name << ", " << (int)asset.compressionType << ", " << asset.compressedSize << ", " << asset.uncompressedSize << std::endl;
 
@@ -202,7 +202,7 @@ BarnAsset* BarnFile::GetAsset(const std::string& assetName)
     return nullptr;
 }
 
-char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& outBufferSize)
+uint8_t* BarnFile::CreateAssetBuffer(const std::string& assetName, uint32_t& outBufferSize)
 {
     // Use a sane default value for this.
     outBufferSize = 0;
@@ -226,7 +226,7 @@ char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& ou
     if(asset->compressionType == CompressionType::None)
     {
         // Allocate buffer to hold asset data.
-        char* buffer = new char[asset->size];
+        uint8_t* buffer = new uint8_t[asset->size];
         outBufferSize = asset->size;
 
         // Seek to the data and read into the buffer. Since it's already uncompressed, we're done!
@@ -239,7 +239,7 @@ char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& ou
 
     // Otherwise, data is compressed - we need to read in compressed data, and then use an appropriate decompressor.
     // Create buffer to hold compressed data.
-    unsigned char* compressedBuffer = new unsigned char[asset->size];
+    uint8_t* compressedBuffer = new uint8_t[asset->size];
 
     // Read compressed data into a buffer.
     // Also grab the decompressed asset size while we're there.
@@ -247,7 +247,7 @@ char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& ou
     mReader.Seek(mDataOffset + asset->offset);
     outBufferSize = mReader.ReadUInt();
     mReader.Skip(4);
-    int readCount = mReader.Read(compressedBuffer, asset->size);
+    uint32_t readCount = mReader.Read(compressedBuffer, asset->size);
     mReaderMutex.unlock();
 
     // Make sure we read what we were expecting.
@@ -259,16 +259,16 @@ char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& ou
     }
         
     // Create buffer for uncompressed data.
-    char* buffer = new char[outBufferSize];
+    uint8_t* buffer = new uint8_t[outBufferSize];
 
     // How we decompress the data depends on the compression type...
     if(asset->compressionType == CompressionType::Zlib)
     {
         // Create params object.
-        z_stream strm;
+        z_stream strm {};
         strm.next_in = compressedBuffer;
         strm.avail_in = asset->size;
-        strm.next_out = (unsigned char*)buffer;
+        strm.next_out = buffer;
         strm.avail_out = outBufferSize;
         strm.zalloc = Z_NULL;
         strm.zfree = Z_NULL;
@@ -326,7 +326,10 @@ char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& ou
         
         // Decompress using LZO library. GK3 data appears to be compressed with lzo1x.
         //std::cout << asset->name << ": decompressing " << asset->compressedSize << " bytes to a buffer of size " << bufferSize << std::endl;
-        int result = lzo1x_decompress((lzo_bytep)compressedBuffer, (lzo_uint)asset->size, (lzo_bytep)buffer, (lzo_uintp)&outBufferSize, nullptr);
+        lzo_bytep compressedPtr = static_cast<lzo_bytep>(compressedBuffer);
+        lzo_bytep bufferPtr = static_cast<lzo_bytep>(buffer);
+        lzo_uint bufferSize = 0;
+        int result = lzo1x_decompress(compressedPtr, asset->size, bufferPtr, &bufferSize, nullptr);
         
         // For some reason *most* GK3 data decompresses with result of LZO_E_INPUT_NOT_CONSUMED.
         // This still works OK. It may indicate that "compressedSize" passed is larger than the compressed data.
@@ -338,6 +341,9 @@ char* BarnFile::CreateAssetBuffer(const std::string& assetName, unsigned int& ou
             delete[] buffer;
             return nullptr;
         }
+
+        // Set buffer size for caller to use.
+        outBufferSize = static_cast<uint32_t>(bufferSize);
     }
     else
     {
@@ -400,21 +406,24 @@ bool BarnFile::WriteToFile(const std::string& assetName, const std::string& outp
 	// Extract the asset and write it to file.
 	bool result = false;
     unsigned int bufferSize = 0;
-    char* assetData = CreateAssetBuffer(assetName, bufferSize);
+    uint8_t* assetData = CreateAssetBuffer(assetName, bufferSize);
 	if(assetData != nullptr)
 	{
 		// Textures can't be written directly to file and open correctly.
 		// Handle those separately (TODO: More modular/extendable way to do this?)
 		if(assetName.find(".BMP") != std::string::npos)
 		{
-			Texture tex(assetName, assetData, bufferSize);
+            Texture tex(assetName, AssetScope::Manual);
+            tex.Load(assetData, bufferSize);
 			tex.WriteToFile(outputPath);
 			result = true;
 		}
-        else if(assetName.find(".SHP") != std::string::npos && SheepScript::IsSheepDataCompiled(assetData, bufferSize))
+        else if(assetName.find(".SHP") != std::string::npos &&
+                SheepScript::IsSheepDataCompiled(assetData, bufferSize))
         {
             // If sheep asset is compiled, we need to decompile it to get any useful data.
-            SheepScript script(assetName, assetData, bufferSize);
+            SheepScript script(assetName, AssetScope::Manual);
+            script.Load(assetData, bufferSize);
             script.Decompile(outputPath);
             result = true;
         }
@@ -424,7 +433,7 @@ bool BarnFile::WriteToFile(const std::string& assetName, const std::string& outp
 			std::ofstream fileStream(outputPath, std::istream::out | std::istream::binary);
 			if(fileStream.good())
 			{
-				fileStream.write(assetData, bufferSize);
+				fileStream.write(reinterpret_cast<char*>(assetData), bufferSize);
 				fileStream.close();
 				result = true;
 			}

@@ -17,7 +17,8 @@
 class Config : public Asset
 {
 public:
-    Config(const std::string& name, char* data, int dataLength);
+    Config(const std::string& name, AssetScope scope) : Asset(name, scope) { }
+    void Load(uint8_t* data, uint32_t dataLength);
 
     void Save(const std::string& path);
 

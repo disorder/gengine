@@ -16,6 +16,7 @@
 #include "AudioManager.h"
 #include "Vector3.h"
 
+class GKObject;
 struct IniSection;
 
 // Specifies how a soundtrack node behaves when the soundtrack stops prematurely.
@@ -30,8 +31,11 @@ struct SoundtrackNodeResults
 {
     PlayingSoundHandle soundHandle;
     StopMethod stopMethod = StopMethod::PlayToEnd;
-    float fadeOutTimeMs = 0.0f;
+    int fadeOutTimeMs = 0;
+    GKObject* followObj = nullptr;
 };
+
+class Soundtrack;
 
 struct SoundtrackNode
 {
@@ -44,13 +48,11 @@ struct SoundtrackNode
     // Percent chance this node will be executed. Should be 1-100.
     // Repeat count is still decremented if node is not executed due to random!
     int random = 100;
-    
-    virtual int Execute(AudioType soundType, SoundtrackNodeResults& outResults) = 0;
 
-    virtual bool IsLooping()
-    {
-        return false;
-    }
+    virtual ~SoundtrackNode() { }
+
+    virtual int Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults) = 0;
+    virtual bool IsLooping() { return false; }
 };
 
 struct WaitNode : public SoundtrackNode
@@ -60,7 +62,7 @@ struct WaitNode : public SoundtrackNode
     int minWaitTimeMs = 0;
     int maxWaitTimeMs = 0;
     
-    int Execute(AudioType soundType, SoundtrackNodeResults& outResults) override;
+    int Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults) override;
 };
 
 struct SoundNode : public SoundtrackNode
@@ -97,7 +99,7 @@ struct SoundNode : public SoundtrackNode
     std::string followModelName;
     
     bool IsLooping() override { return loop; }
-    int Execute(AudioType soundType, SoundtrackNodeResults& outResults) override;
+    int Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults) override;
 };
 
 struct PrsNode : public SoundtrackNode
@@ -106,19 +108,16 @@ struct PrsNode : public SoundtrackNode
     // So basically, PRS consists of multiple sound nodes, one of which is picked at random.
     std::vector<SoundNode*> soundNodes;
     
-    int Execute(AudioType soundType, SoundtrackNodeResults& outResults) override
-    {
-        if(soundNodes.size() == 0) { return 0; }
-        
-        int randomIndex = rand() % soundNodes.size();
-        return soundNodes[randomIndex]->Execute(soundType, outResults);
-    }
+    int Execute(Soundtrack* soundtrack, SoundtrackNodeResults& outResults) override;
 };
 
 class Soundtrack : public Asset
 {
 public:
-    Soundtrack(const std::string& name, char* data, int dataLength);
+    Soundtrack(const std::string& name, AssetScope scope) : Asset(name, scope) { }
+    ~Soundtrack();
+
+    void Load(uint8_t* data, uint32_t dataLength);
     
     AudioType GetSoundType() const { return mSoundType; }
     const std::vector<SoundtrackNode*>& GetNodes() const { return mNodes; }

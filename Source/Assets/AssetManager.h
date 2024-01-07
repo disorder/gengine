@@ -9,10 +9,9 @@
 #include <string>
 #include <vector>
 
-#include "StringUtil.h"
-
-class BarnFile;
+#include "Asset.h"
 #include "BarnFile.h"
+#include "StringUtil.h"
 
 // Forward Declarations for all asset types
 class Animation;
@@ -38,8 +37,8 @@ class VertexAnimation;
 class AssetManager
 {
 public:
-    AssetManager();
-    ~AssetManager();
+    void Init();
+    void Shutdown();
 
     // Loose Files
 	// Adds a filesystem path to search for assets and bundles at.
@@ -63,43 +62,45 @@ public:
 	void WriteAllBarnAssetsToFile(const std::string& search);
 	void WriteAllBarnAssetsToFile(const std::string& search, const std::string& outputDir);
 
-    // Loading Assets
-    Audio* LoadAudio(const std::string& name);
-    Soundtrack* LoadSoundtrack(const std::string& name);
-	Animation* LoadYak(const std::string& name);
+    // Loading (or Getting) Assets
+    Audio* LoadAudio(const std::string& name, AssetScope scope = AssetScope::Global);
+    Audio* LoadAudioAsync(const std::string& name, AssetScope scope = AssetScope::Global);
+    Soundtrack* LoadSoundtrack(const std::string& name, AssetScope scope = AssetScope::Global);
+	Animation* LoadYak(const std::string& name, AssetScope scope = AssetScope::Global);
     
-    Model* LoadModel(const std::string& name);
-    Texture* LoadTexture(const std::string& name);
-    Texture* LoadSceneTexture(const std::string& name);
-    const std::unordered_map_ci<std::string, Texture*>& GetLoadedTextures() { return mLoadedTextures; }
+    Model* LoadModel(const std::string& name, AssetScope scope = AssetScope::Global);
+    Texture* LoadTexture(const std::string& name, AssetScope scope = AssetScope::Global);
+    Texture* LoadTextureAsync(const std::string& name, AssetScope scope = AssetScope::Global);
+    Texture* LoadSceneTexture(const std::string& name, AssetScope scope = AssetScope::Global);
+    const std::string_map_ci<Texture*>& GetLoadedTextures() { return mTextureCache.cache; }
     
-    GAS* LoadGAS(const std::string& name);
-    Animation* LoadAnimation(const std::string& name);
-    Animation* LoadMomAnimation(const std::string& name);
-    VertexAnimation* LoadVertexAnimation(const std::string& name);
-    Sequence* LoadSequence(const std::string& name);
+    GAS* LoadGAS(const std::string& name, AssetScope scope = AssetScope::Global);
+    Animation* LoadAnimation(const std::string& name, AssetScope scope = AssetScope::Global);
+    Animation* LoadMomAnimation(const std::string& name, AssetScope scope = AssetScope::Global);
+    VertexAnimation* LoadVertexAnimation(const std::string& name, AssetScope scope = AssetScope::Global);
+    Sequence* LoadSequence(const std::string& name, AssetScope scope = AssetScope::Global);
     
-    SceneInitFile* LoadSIF(const std::string& name);
-    SceneAsset* LoadSceneAsset(const std::string& name);
-    NVC* LoadNVC(const std::string& name);
+    SceneInitFile* LoadSIF(const std::string& name, AssetScope scope = AssetScope::Global);
+    SceneAsset* LoadSceneAsset(const std::string& name, AssetScope scope = AssetScope::Global);
+    NVC* LoadNVC(const std::string& name, AssetScope scope = AssetScope::Global);
     
-    BSP* LoadBSP(const std::string& name);
-    void UnloadBSP(BSP* bsp);
-
-    BSPLightmap* LoadBSPLightmap(const std::string& name);
+    BSP* LoadBSP(const std::string& name, AssetScope scope = AssetScope::Global);
+    BSPLightmap* LoadBSPLightmap(const std::string& name, AssetScope scope = AssetScope::Global);
     
-    SheepScript* LoadSheep(const std::string& name);
+    SheepScript* LoadSheep(const std::string& name, AssetScope scope = AssetScope::Global);
     
-    Cursor* LoadCursor(const std::string& name);
-	Font* LoadFont(const std::string& name);
+    Cursor* LoadCursor(const std::string& name, AssetScope scope = AssetScope::Global);
+    Cursor* LoadCursorAsync(const std::string& name, AssetScope scope = AssetScope::Global);
+	Font* LoadFont(const std::string& name, AssetScope scope = AssetScope::Global);
 	
-    Shader* LoadShader(const std::string& name);
-	Shader* LoadShader(const std::string& vertName, const std::string& fragName);
-    
-    TextAsset* LoadText(const std::string& name);
-    void UnloadText(TextAsset* text);
-
+    TextAsset* LoadText(const std::string& name, AssetScope scope = AssetScope::Global);
     Config* LoadConfig(const std::string& name);
+
+    Shader* LoadShader(const std::string& name);
+    Shader* LoadShader(const std::string& vertName, const std::string& fragName);
+
+    // Unloading Assets
+    void UnloadAssets(AssetScope scope);
     
 private:
     // A list of paths to search for assets.
@@ -108,39 +109,91 @@ private:
     
     // A map of loaded barn files. If an asset isn't found on any search path,
     // we then search each loaded barn file for the asset.
-    std::unordered_map_ci<std::string, BarnFile> mLoadedBarns;
+    std::string_map_ci<BarnFile> mLoadedBarns;
     
     // A list of loaded assets, so we can just return existing assets if already loaded.
-    std::unordered_map_ci<std::string, Audio*> mLoadedAudios;
-	std::unordered_map_ci<std::string, Soundtrack*> mLoadedSoundtracks;
-	std::unordered_map_ci<std::string, Animation*> mLoadedYaks;
-	
-	std::unordered_map_ci<std::string, Model*> mLoadedModels;
-    std::unordered_map_ci<std::string, Texture*> mLoadedTextures;
-	
-	std::unordered_map_ci<std::string, GAS*> mLoadedGases;
-	std::unordered_map_ci<std::string, Animation*> mLoadedAnimations;
-    std::unordered_map_ci<std::string, Animation*> mLoadedMomAnimations;
-	std::unordered_map_ci<std::string, VertexAnimation*> mLoadedVertexAnimations;
-    std::unordered_map_ci<std::string, Sequence*> mLoadedSequences;
-	
-	std::unordered_map_ci<std::string, SceneInitFile*> mLoadedSIFs;
-	std::unordered_map_ci<std::string, SceneAsset*> mLoadedSceneAssets;
-	std::unordered_map_ci<std::string, NVC*> mLoadedActionSets;
-    
-	std::unordered_map_ci<std::string, BSP*> mLoadedBSPs;
-    std::unordered_map_ci<std::string, BSPLightmap*> mLoadedBSPLightmaps;
-    
-	std::unordered_map_ci<std::string, SheepScript*> mLoadedSheeps;
+    template<typename T>
+    struct AssetCache
+    {
+        std::string_map_ci<T*> cache;
 
-    std::unordered_map_ci<std::string, Cursor*> mLoadedCursors;
-    std::unordered_map_ci<std::string, Font*> mLoadedFonts;
-	
-    std::unordered_map_ci<std::string, Shader*> mLoadedShaders;
+        // A mutex is required since we allow loading assets on any thread.
+        // We don't want multiple threads modifying the cache at the same time.
+        std::mutex mutex;
 
-    std::unordered_map_ci<std::string, TextAsset*> mLoadedTexts;
+        T* Get(const std::string& name)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            auto it = cache.find(name);
+            return it != cache.end() ? it->second : nullptr;
+        }
 
-    std::unordered_map_ci<std::string, Config*> mLoadedConfigs;
+        void Set(const std::string& name, T* asset)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            cache[name] = asset;
+        }
+
+        void Unload(AssetScope scope = AssetScope::Global)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if(scope == AssetScope::Global)
+            {
+                // When unloading at global scope, we're really deleting everything and clearing the entire cache.
+                for(auto& entry : cache)
+                {
+                    delete entry.second;
+                }
+                cache.clear();
+            }
+            else
+            {
+                // Otherwise, we are picking and choosing what we want to get rid of.
+                for(auto it = cache.begin(); it != cache.end();)
+                {
+                    if((*it).second->GetScope() == scope)
+                    {
+                        delete (*it).second;
+                        it = cache.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+            }
+        }
+    };
+    AssetCache<Audio> mAudioCache;
+    AssetCache<Soundtrack> mSoundtrackCache;
+    AssetCache<Animation> mYakCache;
+
+    AssetCache<Model> mModelCache;
+    AssetCache<Texture> mTextureCache;
+
+    AssetCache<Animation> mAnimationCache;
+    AssetCache<Animation> mMomAnimationCache;
+    AssetCache<Sequence> mSequenceCache;
+    AssetCache<VertexAnimation> mVertexAnimationCache;
+    AssetCache<GAS> mGasCache;
+
+    AssetCache<SceneInitFile> mSifCache;
+    AssetCache<SceneAsset> mSceneAssetCache;
+    AssetCache<NVC> mNvcCache;
+
+    AssetCache<BSP> mBspCache;
+    AssetCache<BSPLightmap> mBspLightmapCache;
+
+    AssetCache<SheepScript> mSheepCache;
+
+    AssetCache<Cursor> mCursorCache;
+    AssetCache<Font> mFontCache;
+
+    AssetCache<TextAsset> mTextAssetCache;
+    AssetCache<Config> mConfigCache;
+
+    AssetCache<TextAsset> mShaderFileCache;
+    AssetCache<Shader> mShaderCache;
 	
 	// Retrieve a barn bundle by name, or by contained asset.
 	BarnFile* GetBarn(const std::string& barnName);
@@ -152,11 +205,12 @@ private:
     // The first uses a single constructor (name, data, size).
     // The second uses a constructor (name) and a separate load function (data, size).
     // The latter is necessary if two assets can potentially attempt to load one another (circular dependency).
-    template<class T> T* LoadAsset(const std::string& assetName, std::unordered_map_ci<std::string, T*>* cache, T*(*createFunc)(const std::string&, char*, unsigned int) = nullptr, bool deleteBuffer = true);
-    template<class T> T* LoadAsset_SeparateLoadFunc(const std::string& assetName, std::unordered_map_ci<std::string, T*>* cache, bool deleteBuffer = true);
-    
-    char* CreateAssetBuffer(const std::string& assetName, unsigned int& outBufferSize);
+    template<typename T> T* LoadAsset(const std::string& name, AssetScope scope, AssetCache<T>* cache, bool deleteBuffer = true);
+    template<typename T> T* LoadAssetAsync(const std::string& name, AssetScope scope, AssetCache<T>* cache, bool deleteBuffer = true, std::function<void(T*)> callback = nullptr);
+
+    uint8_t* CreateAssetBuffer(const std::string& assetName, uint32_t& outBufferSize);
 
     template<class T> void UnloadAsset(T* asset, std::unordered_map_ci<std::string, T*>* cache = nullptr);
-    template<class T> void UnloadAssets(std::unordered_map_ci<std::string, T*>& cache);
 };
+
+extern AssetManager gAssetManager;

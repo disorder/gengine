@@ -1,25 +1,26 @@
 #include "VerbManager.h"
 
+#include "AssetManager.h"
 #include "IniParser.h"
-#include "Services.h"
 #include "TextAsset.h"
 #include "Texture.h"
 
 float VerbIcon::GetWidth() const
 {
-	if(upTexture != nullptr) { return upTexture->GetWidth(); }
-	if(downTexture != nullptr) { return downTexture->GetWidth(); }
-	if(hoverTexture != nullptr) { return hoverTexture->GetWidth(); }
-	if(disableTexture != nullptr) { return disableTexture->GetWidth(); }
-	return 0.0f;
+    uint32_t width = 0;
+	if(upTexture != nullptr) { width = upTexture->GetWidth(); }
+	else if(downTexture != nullptr) { width = downTexture->GetWidth(); }
+	else if(hoverTexture != nullptr) { width = hoverTexture->GetWidth(); }
+    else if(disableTexture != nullptr) { width = disableTexture->GetWidth(); }
+    return static_cast<float>(width);
 }
 
-TYPE_DEF_BASE(VerbManager);
+VerbManager gVerbManager;
 
-VerbManager::VerbManager()
+void VerbManager::Init()
 {
 	// Get VERBS text file.
-	TextAsset* text = Services::GetAssets()->LoadText("VERBS.TXT");
+	TextAsset* text = gAssetManager.LoadText("VERBS.TXT", AssetScope::Manual);
 	
 	// Pass that along to INI parser, since it is plain text and in INI format.
 	IniParser parser(text->GetText(), text->GetTextLength());
@@ -49,28 +50,28 @@ VerbManager::VerbManager()
 
         // The remaining values are all optional.
         // If a value isn't present, the above defaults are used.
-        for(int i = 1; i < line.entries.size(); ++i)
+        for(size_t i = 1; i < line.entries.size(); ++i)
         {
             IniKeyValue& keyValuePair = line.entries[i];
             if(StringUtil::EqualsIgnoreCase(keyValuePair.key, "up"))
             {
-                upTexture = Services::GetAssets()->LoadTexture(keyValuePair.value);
+                upTexture = gAssetManager.LoadTextureAsync(keyValuePair.value);
             }
             else if(StringUtil::EqualsIgnoreCase(keyValuePair.key, "down"))
             {
-                downTexture = Services::GetAssets()->LoadTexture(keyValuePair.value);
+                downTexture = gAssetManager.LoadTextureAsync(keyValuePair.value);
             }
             else if(StringUtil::EqualsIgnoreCase(keyValuePair.key, "hover"))
             {
-                hoverTexture = Services::GetAssets()->LoadTexture(keyValuePair.value);
+                hoverTexture = gAssetManager.LoadTextureAsync(keyValuePair.value);
             }
             else if(StringUtil::EqualsIgnoreCase(keyValuePair.key, "disable"))
             {
-                disableTexture = Services::GetAssets()->LoadTexture(keyValuePair.value);
+                disableTexture = gAssetManager.LoadTextureAsync(keyValuePair.value);
             }
             else if(StringUtil::EqualsIgnoreCase(keyValuePair.key, "cursor"))
             {
-                cursor = Services::GetAssets()->LoadCursor(keyValuePair.value);
+                cursor = gAssetManager.LoadCursorAsync(keyValuePair.value);
             }
             else if(StringUtil::EqualsIgnoreCase(keyValuePair.key, "type"))
             {
@@ -108,6 +109,9 @@ VerbManager::VerbManager()
             map->insert({ entry.key, verbIcon });
         }
     }
+
+    // Done with this asset.
+    delete text;
 }
 
 VerbIcon& VerbManager::GetInventoryIcon(const std::string& noun)

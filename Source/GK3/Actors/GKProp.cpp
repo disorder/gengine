@@ -1,5 +1,7 @@
 #include "GKProp.h"
 
+#include "AssetManager.h"
+#include "Billboard.h"
 #include "GasPlayer.h"
 #include "MeshRenderer.h"
 #include "Model.h"
@@ -11,7 +13,7 @@
 GKProp::GKProp() : GKObject()
 {
     mMeshRenderer = AddComponent<MeshRenderer>();
-    mMeshRenderer->SetShader(Services::GetAssets()->LoadShader("3D-Tex-Lit"));
+    mMeshRenderer->SetShader(gAssetManager.LoadShader("3D-Tex-Lit"));
 
     mVertexAnimator = AddComponent<VertexAnimator>();
     
@@ -25,12 +27,19 @@ GKProp::GKProp(Model* model) : GKProp()
     // Use the model's name as the name of the actor.
     // This is sometimes used for gameplay logic, so be careful about changing this!
     SetName(mMeshRenderer->GetModelName());
+
+    // If this prop acts as a billboard, add the billboard component to it.
+    if(model->IsBillboard())
+    {
+        AddComponent<Billboard>();
+    }
 }
 
 GKProp::GKProp(const SceneModel& modelDef) : GKProp(modelDef.model)
 {
     SetNoun(modelDef.noun);
-    
+    SetVerb(modelDef.verb);
+
     // If it's a "gas prop", use provided gas as the fidget for the actor.
     //TODO: Ideally, start fidget during init, not construction.
     if(modelDef.type == SceneModel::Type::GasProp)

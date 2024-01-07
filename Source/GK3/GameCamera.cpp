@@ -1,10 +1,11 @@
 #include "GameCamera.h"
 
+#include "ActionManager.h"
 #include "AudioListener.h"
 #include "Camera.h"
 #include "Collisions.h"
+#include "CursorManager.h"
 #include "Debug.h"
-#include "GEngine.h"
 #include "GKActor.h"
 #include "GKObject.h"
 #include "InventoryManager.h"
@@ -13,30 +14,49 @@
 #include "OptionBar.h"
 #include "Ray.h"
 #include "SaveManager.h"
-#include "Scene.h"
+#include "SceneManager.h"
 #include "Sphere.h"
 #include "StringUtil.h"
 #include "Triangle.h"
 #include "VerbManager.h"
 #include "UICanvas.h"
 
-/*static*/ bool GameCamera::IsCameraGlideEnabled()
-{
-    return gSaveManager.GetPrefs()->GetBool(PREFS_ENGINE, PREF_CAMERA_GLIDE, true);
-}
-
 /*static*/ void GameCamera::SetCameraGlideEnabled(bool enabled)
 {
     gSaveManager.GetPrefs()->Set(PREFS_ENGINE, PREF_CAMERA_GLIDE, enabled);
 }
 
-GameCamera::GameCamera()
+/*static*/ bool GameCamera::IsCameraGlideEnabled()
+{
+    return gSaveManager.GetPrefs()->GetBool(PREFS_ENGINE, PREF_CAMERA_GLIDE, true);
+}
+
+/*static*/ void GameCamera::SetCinematicsEnabled(bool enabled)
+{
+    gSaveManager.GetPrefs()->Set(PREFS_ENGINE, PREF_CINEMATICS, enabled);
+}
+
+/*static*/ bool GameCamera::AreCinematicsEnabled()
+{
+    return gSaveManager.GetPrefs()->GetBool(PREFS_ENGINE, PREF_CINEMATICS, true);
+}
+
+GameCamera::GameCamera() : Actor("Camera")
 {
     mCamera = AddComponent<Camera>();
     AddComponent<AudioListener>();
     
     // Create option bar.
     mOptionBar = new OptionBar();
+}
+
+void GameCamera::RemoveBounds(Model* model)
+{
+    auto it = std::find(mBoundsModels.begin(), mBoundsModels.end(), model);
+    if(it != mBoundsModels.end())
+    {
+        mBoundsModels.erase(it);
+    }
 }
 
 void GameCamera::SetAngle(const Vector2& angle)
@@ -90,6 +110,16 @@ void GameCamera::Uninspect(std::function<void()> callback)
     }
 }
 
+void GameCamera::SaveFov()
+{
+    mSavedCameraFOV = mCamera->GetCameraFovRadians();
+}
+
+void GameCamera::RestoreFov()
+{
+    mCamera->SetCameraFovRadians(mSavedCameraFOV);
+}
+
 void GameCamera::OnUpdate(float deltaTime)
 {
     /*
@@ -130,7 +160,7 @@ void GameCamera::OnUpdate(float deltaTime)
     // Show options on right-click. This works even if an action is playing.
     if(!mUsedMouseInputsForMouseLock)
     {
-        if(Services::GetInput()->IsMouseButtonTrailingEdge(InputManager::MouseButton::Right))
+        if(gInputManager.IsMouseButtonTrailingEdge(InputManager::MouseButton::Right))
         {
             mOptionBar->Show();
         }
@@ -139,8 +169,8 @@ void GameCamera::OnUpdate(float deltaTime)
     // If no mouse button is pressed, we can clear the mouse locked with current inputs flag.
     if(mUsedMouseInputsForMouseLock)
     {
-        if(!Services::GetInput()->IsMouseButtonPressed(InputManager::MouseButton::Left) &&
-           !Services::GetInput()->IsMouseButtonPressed(InputManager::MouseButton::Right))
+        if(!gInputManager.IsMouseButtonPressed(InputManager::MouseButton::Left) &&
+           !gInputManager.IsMouseButtonPressed(InputManager::MouseButton::Right))
         {
             mUsedMouseInputsForMouseLock = false;
         }
@@ -148,30 +178,30 @@ void GameCamera::OnUpdate(float deltaTime)
     
     // BELOW HERE: logic for player's keyboard shortcuts.
     // Keyboard shortcut keys are only available if text input is not active.
-    if(!Services::GetInput()->IsTextInput())
+    if(!gInputManager.IsTextInput())
     {
         // Some keyboard shortcuts are only available when an action is not playing.
-        bool actionPlaying = Services::Get<ActionManager>()->IsActionPlaying();
+        bool actionPlaying = gActionManager.IsActionPlaying();
         if(!actionPlaying)
         {
             // If 'I' is pressed, toggle inventory.
-            if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_I))
+            if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_I))
             {
                 // If the scene is active, show the inventory.
                 // If the inventory is showing, hide it.
                 if(mSceneActive)
                 {
-                    Services::Get<InventoryManager>()->ShowInventory();
+                    gInventoryManager.ShowInventory();
                 }
-                else if(Services::Get<InventoryManager>()->IsInventoryShowing())
+                else if(gInventoryManager.IsInventoryShowing())
                 {
-                    Services::Get<InventoryManager>()->HideInventory();
+                    gInventoryManager.HideInventory();
                 }
             }
         }
         
         // If 'P' is pressed, this toggles game pause. Works even if action is ongoing.
-        if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_P))
+        if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_P))
         {
             //TODO: implement pause!
             std::cout << "Pause!" << std::endl;
@@ -182,9 +212,9 @@ void GameCamera::OnUpdate(float deltaTime)
         }
 
         // Pressing escape acts as a "skip" or "cancel" action, depending on current state of the game.
-        if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_ESCAPE))
+        if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_ESCAPE))
         {
-            GEngine::Instance()->GetScene()->SkipCurrentAction();
+            gSceneManager.GetScene()->SkipCurrentAction();
         }
     }
 }
@@ -223,37 +253,67 @@ void GameCamera::SceneUpdate(float deltaTime)
         return;
     }
 
-    // Nothing else can happen while an action is occurring.
-    bool actionPlaying = Services::Get<ActionManager>()->IsActionPlaying();
-    if(actionPlaying)
+    // It's possible our height was changed due to a script moving the camera.
+    // Make sure height is correct before we do our updates.
+    float startFloorY = gSceneManager.GetScene()->GetFloorY(GetPosition());
+    mHeight = GetPosition().y - startFloorY;
+
+    // Update camera movement/rotation.
+    SceneUpdateMovement(deltaTime);
+    
+    // Raycast to the ground and always maintain a desired height.
+    //TODO: This does not apply when camera boundaries are disabled!
+    //TODO: Doesn't apply when middle mouse button is held???
+    Scene* scene = gSceneManager.GetScene();
+    if(scene != nullptr)
+    {
+        Vector3 pos = GetPosition();
+        float floorY = scene->GetFloorY(pos);
+        pos.y = floorY + mHeight;
+        SetPosition(pos);
+    }
+
+    // Check for scene interaction based on mouse pointer position and mouse button presses.
+    SceneUpdateInteract(deltaTime);
+    
+    // Clear camera lock if left mouse is not pressed.
+    // Do this AFTER interact check to avoid interacting with things when exiting mouse locked movement mode.
+    if(!gInputManager.IsMouseButtonPressed(InputManager::MouseButton::Left))
+    {
+        gInputManager.UnlockMouse();
+    }
+}
+
+void GameCamera::SceneUpdateMovement(float deltaTime)
+{
+    // No movements are allowed during forced cinematic mode.
+    if(mForcedCinematicMode) { return; }
+
+    // Movement is not allowed during actions UNLESS cinematic camera is disabled.
+    if(gActionManager.IsActionPlaying() && AreCinematicsEnabled())
     {
         return;
     }
 
-    // It's possible our height was changed due to a script moving the camera.
-    // Make sure height is correct before we do our updates.
-    float startFloorY = GEngine::Instance()->GetScene()->GetFloorY(GetPosition());
-    mHeight = GetPosition().y - startFloorY;
-    
     // We don't move/turn unless some input causes it.
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;
     float turnSpeed = 0.0f;
     float pitchSpeed = 0.0f;
     float verticalSpeed = 0.0f;
-    
+
     // Pan/Pan modifiers are activated with CTRL/SHIFT keys.
     // These work EVEN IF text input is active.
-    bool panModifierActive = Services::GetInput()->IsKeyPressed(SDL_SCANCODE_LCTRL) ||
-                             Services::GetInput()->IsKeyPressed(SDL_SCANCODE_RCTRL);;
-    bool pitchModifierActive = Services::GetInput()->IsKeyPressed(SDL_SCANCODE_LSHIFT) ||
-                               Services::GetInput()->IsKeyPressed(SDL_SCANCODE_RSHIFT);
-    
+    bool panModifierActive = gInputManager.IsKeyPressed(SDL_SCANCODE_LCTRL) ||
+        gInputManager.IsKeyPressed(SDL_SCANCODE_RCTRL);;
+    bool pitchModifierActive = gInputManager.IsKeyPressed(SDL_SCANCODE_LSHIFT) ||
+        gInputManager.IsKeyPressed(SDL_SCANCODE_RSHIFT);
+
     // W/S/A/D and Up/Down/Left/Right only work if text input isn't stealing input.
-    if(!Services::GetInput()->IsTextInput())
+    if(!gInputManager.IsTextInput())
     {
-        if(Services::GetInput()->IsKeyPressed(SDL_SCANCODE_W) ||
-           Services::GetInput()->IsKeyPressed(SDL_SCANCODE_UP))
+        if(gInputManager.IsKeyPressed(SDL_SCANCODE_W) ||
+           gInputManager.IsKeyPressed(SDL_SCANCODE_UP))
         {
             if(pitchModifierActive)
             {
@@ -268,8 +328,8 @@ void GameCamera::SceneUpdate(float deltaTime)
                 forwardSpeed += kSpeed;
             }
         }
-        else if(Services::GetInput()->IsKeyPressed(SDL_SCANCODE_S) ||
-                Services::GetInput()->IsKeyPressed(SDL_SCANCODE_DOWN))
+        else if(gInputManager.IsKeyPressed(SDL_SCANCODE_S) ||
+                gInputManager.IsKeyPressed(SDL_SCANCODE_DOWN))
         {
             if(pitchModifierActive)
             {
@@ -284,9 +344,9 @@ void GameCamera::SceneUpdate(float deltaTime)
                 forwardSpeed -= kSpeed;
             }
         }
-        
-        if(Services::GetInput()->IsKeyPressed(SDL_SCANCODE_D) ||
-           Services::GetInput()->IsKeyPressed(SDL_SCANCODE_RIGHT))
+
+        if(gInputManager.IsKeyPressed(SDL_SCANCODE_D) ||
+           gInputManager.IsKeyPressed(SDL_SCANCODE_RIGHT))
         {
             if(pitchModifierActive)
             {
@@ -301,8 +361,8 @@ void GameCamera::SceneUpdate(float deltaTime)
                 turnSpeed += kRotationSpeed;
             }
         }
-        if(Services::GetInput()->IsKeyPressed(SDL_SCANCODE_A) ||
-           Services::GetInput()->IsKeyPressed(SDL_SCANCODE_LEFT))
+        if(gInputManager.IsKeyPressed(SDL_SCANCODE_A) ||
+           gInputManager.IsKeyPressed(SDL_SCANCODE_LEFT))
         {
             if(pitchModifierActive)
             {
@@ -319,7 +379,7 @@ void GameCamera::SceneUpdate(float deltaTime)
         }
 
         // Handle spacebar input, which resets camera pitch/height.
-        if(Services::GetInput()->IsKeyLeadingEdge(SDL_SCANCODE_SPACE))
+        if(gInputManager.IsKeyLeadingEdge(SDL_SCANCODE_SPACE))
         {
             // Reset pitch by discarding all rotation about the right axis, while keeping all else.
             Quaternion current = GetTransform()->GetRotation();
@@ -329,15 +389,15 @@ void GameCamera::SceneUpdate(float deltaTime)
             mHeight = kDefaultHeight;
         }
     }
-    
+
     // If left mouse button is held down, mouse movement contributes to camera movement.
-    bool leftMousePressed = Services::GetInput()->IsMouseButtonPressed(InputManager::MouseButton::Left);
+    bool leftMousePressed = gInputManager.IsMouseButtonPressed(InputManager::MouseButton::Left);
     if(leftMousePressed && !UICanvas::DidWidgetEatInput())
     {
         // Track click start position for turning on mouse-based camera movement.
         // To avoid mistakenly enabling this, you must move the mouse some distance before it enables.
-        Vector2 mousePosition = Services::GetInput()->GetMousePosition();
-        if(Services::GetInput()->IsMouseButtonLeadingEdge(InputManager::MouseButton::Left))
+        Vector2 mousePosition = gInputManager.GetMousePosition();
+        if(gInputManager.IsMouseButtonLeadingEdge(InputManager::MouseButton::Left))
         {
             mClickStartPos = mousePosition;
         }
@@ -345,18 +405,18 @@ void GameCamera::SceneUpdate(float deltaTime)
         {
             // Moved the mouse far enough, so enable mouse lock.
             mUsedMouseInputsForMouseLock = true;
-            Services::GetInput()->LockMouse();
+            gInputManager.LockMouse();
         }
 
         // Do mouse-based movements if mouse lock is active.
-        if(Services::GetInput()->MouseLocked())
+        if(gInputManager.MouseLocked())
         {
             // Pan modifier also activates if right mouse button is pressed.
-            panModifierActive |= Services::GetInput()->IsMouseButtonPressed(InputManager::MouseButton::Right);
+            panModifierActive |= gInputManager.IsMouseButtonPressed(InputManager::MouseButton::Right);
 
             // Mouse delta is in pixels.
             // We normalize this by estimating "max pixel movement" per frame.
-            Vector2 mouseDelta = Services::GetInput()->GetMouseDelta();
+            Vector2 mouseDelta = gInputManager.GetMouseDelta();
             mouseDelta /= kMouseRangePixels;
 
             // Mouse y-axis affect depends on modifiers.
@@ -389,10 +449,10 @@ void GameCamera::SceneUpdate(float deltaTime)
             }
         }
     }
-    
+
     // Alt keys just increase all speeds!
-    if(Services::GetInput()->IsKeyPressed(SDL_SCANCODE_LALT) ||
-       Services::GetInput()->IsKeyPressed(SDL_SCANCODE_RALT))
+    if(gInputManager.IsKeyPressed(SDL_SCANCODE_LALT) ||
+       gInputManager.IsKeyPressed(SDL_SCANCODE_RALT))
     {
         forwardSpeed *= kFastSpeedMultiplier;
         strafeSpeed *= kFastSpeedMultiplier;
@@ -400,7 +460,7 @@ void GameCamera::SceneUpdate(float deltaTime)
         pitchSpeed *= kFastSpeedMultiplier;
         verticalSpeed *= kFastSpeedMultiplier;
     }
-    
+
     // For forward movement, we want to disregard any y-facing; just move on X/Z plane.
     Vector3 forward = GetForward();
     forward.y = 0.0f;
@@ -411,10 +471,10 @@ void GameCamera::SceneUpdate(float deltaTime)
     Vector3 position = GetPosition();
     position += forward * forwardSpeed * deltaTime;
     position += GetRight() * strafeSpeed * deltaTime;
-    
+
     // Calculate new desired height and apply that to position y.
     float height = mHeight + verticalSpeed * deltaTime;
-    float floorY = GEngine::Instance()->GetScene()->GetFloorY(position);
+    float floorY = gSceneManager.GetScene()->GetFloorY(position);
     position.y = floorY + height;
 
     // Determine offset from start to end position.
@@ -422,19 +482,19 @@ void GameCamera::SceneUpdate(float deltaTime)
 
     // Perform collision checks and resolutions.
     position = ResolveCollisions(GetPosition(), moveOffset);
-    
+
     // Set position after resolving collisions.
     GetTransform()->SetPosition(position);
-    
+
     // Height may also be affected by collision. After resolving,
     // we can see if our height changed and save it.
-    float newFloorY = GEngine::Instance()->GetScene()->GetFloorY(position);
+    float newFloorY = gSceneManager.GetScene()->GetFloorY(position);
     float heightForReal = position.y - newFloorY;
     mHeight = heightForReal;
-    
+
     // Apply turn movement.
     GetTransform()->Rotate(Vector3::UnitY, turnSpeed * deltaTime, Transform::Space::World);
-    
+
     // Apply pitch movement.
     GetTransform()->Rotate(GetRight(), -pitchSpeed * deltaTime, Transform::Space::World);
 
@@ -443,37 +503,34 @@ void GameCamera::SceneUpdate(float deltaTime)
     {
         mInspectNoun.clear();
     }
+}
 
-    // Raycast to the ground and always maintain a desired height.
-    //TODO: This does not apply when camera boundaries are disabled!
-    //TODO: Doesn't apply when middle mouse button is held???
-    Scene* scene = GEngine::Instance()->GetScene();
-    if(scene != nullptr)
+void GameCamera::SceneUpdateInteract(float deltaTime)
+{
+    // Never allowed to interact while an action is playing.
+    if(gActionManager.IsActionPlaying())
     {
-        Vector3 pos = GetPosition();
-        floorY = scene->GetFloorY(pos);
-        pos.y = floorY + mHeight;
-        SetPosition(pos);
+        return;
     }
-    
+
     // Handle hovering and clicking on scene objects.
     //TODO: Original game seems to ONLY check this when the mouse cursor moves or is clicked (in other words, on input).
     //TODO: Maybe we should do that too?
-    if(!Services::GetInput()->MouseLocked())
+    if(!gInputManager.MouseLocked())
     {
         // Only allow scene interaction if pointer isn't over a UI widget.
         if(!UICanvas::DidWidgetEatInput())
         {
             // Calculate mouse click ray.
-            Vector2 mousePos = Services::GetInput()->GetMousePosition();
+            Vector2 mousePos = gInputManager.GetMousePosition();
             Vector3 worldPos = mCamera->ScreenToWorldPoint(mousePos, 0.0f);
             Vector3 worldPos2 = mCamera->ScreenToWorldPoint(mousePos, 1.0f);
             Vector3 dir = (worldPos2 - worldPos).Normalize();
             Ray ray(worldPos, dir);
-            
+
             // Cast into the scene to see if we're over an interactive object.
-            SceneCastResult result = GEngine::Instance()->GetScene()->Raycast(ray, true);
-        
+            SceneCastResult result = gSceneManager.GetScene()->Raycast(ray, true);
+
             // If we can interact with whatever we are pointing at, highlight the cursor.
             // Note we call "UseHighlightCursor" when start hovering OR we switch hover to new object.
             // This toggles red/blue highlight.
@@ -486,32 +543,32 @@ void GameCamera::SceneUpdate(float deltaTime)
                     Cursor* customCursor = nullptr;
                     if(!hovering->GetVerb().empty())
                     {
-                        customCursor = Services::Get<VerbManager>()->GetVerbIcon(hovering->GetVerb()).cursor;
+                        customCursor = gVerbManager.GetVerbIcon(hovering->GetVerb()).cursor;
                     }
 
                     // Set cursor appropriately.
                     if(customCursor != nullptr)
                     {
-                        Services::Get<CursorManager>()->UseCustomCursor(customCursor);
+                        gCursorManager.UseCustomCursor(customCursor);
                     }
                     else
                     {
-                        Services::Get<CursorManager>()->UseHighlightCursor();
+                        gCursorManager.UseHighlightCursor();
                     }
                     mLastHoveredNoun = hovering->GetNoun();
                 }
             }
             else
             {
-                Services::Get<CursorManager>()->UseDefaultCursor();
+                gCursorManager.UseDefaultCursor();
                 mLastHoveredNoun.clear();
             }
-            
+
             // If left mouse button is released, try to interact with whatever it is over.
             // Need to do this, even if canInteract==false, because floor can be clicked to move around.
-            if(Services::GetInput()->IsMouseButtonTrailingEdge(InputManager::MouseButton::Left))
+            if(gInputManager.IsMouseButtonTrailingEdge(InputManager::MouseButton::Left))
             {
-                GEngine::Instance()->GetScene()->Interact(ray, hovering);
+                gSceneManager.GetScene()->Interact(ray, hovering);
             }
         }
         else
@@ -519,20 +576,13 @@ void GameCamera::SceneUpdate(float deltaTime)
             mLastHoveredNoun.clear();
         }
     }
-    
-    // Clear camera lock if left mouse is not pressed.
-    // Do this AFTER interact check to avoid interacting with things when exiting mouse locked movement mode.
-    if(!leftMousePressed)
-    {
-        Services::GetInput()->UnlockMouse();
-    }
 }
 
 Vector3 GameCamera::ResolveCollisions(const Vector3& startPosition, const Vector3& moveOffset)
 {
 	// No bounds model = no collision.
 	// Bounds may also be purposely disabled for debugging purposes.
-	if(mBoundsModels.empty() || !mBoundsEnabled || Services::GetInput()->IsKeyPressed(SDL_SCANCODE_SPACE))
+	if(mBoundsModels.empty() || !mBoundsEnabled || gInputManager.IsKeyPressed(SDL_SCANCODE_SPACE))
     {
         return startPosition + moveOffset;
     }

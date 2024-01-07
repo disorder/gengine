@@ -5,12 +5,13 @@
 //
 #pragma once
 #include <functional>
+#include <unordered_map>
 #include <vector>
 
 #include <fmod.hpp>
 #include <fmod_errors.h>
 
-#include "Atomics.h"
+#include "Vector3.h"
 
 class Audio;
 class Vector3;
@@ -22,31 +23,32 @@ class PlayingSoundHandle
 {
 public:
     PlayingSoundHandle() = default;
-    PlayingSoundHandle(FMOD::Channel* channel, Audio* audio);
+    PlayingSoundHandle(FMOD::Channel* channel, FMOD::Sound* sound);
 
     void Stop(float fadeOutTime = 0.0f);
     void Pause();
     void Resume();
-    
-    void SetVolume(float volume);
     bool IsPlaying() const;
     
+    void SetVolume(float volume);
+    void SetPosition(const Vector3& position);
+
 private:
     friend class AudioManager; // Allow audio manager to access internals.
 
-    // The Audio asset that triggered this sound to play.
-    Audio* audio = nullptr;
-    
     // An FMOD "channel" represents a single playing sound. Channel* is returned by PlaySound.
     // Once returned, this pointer is always valid, even if the sound stops playing or the channel is reused.
     // In one of those scenarios, calls to channel functions start to return FMOD_ERR_INVALID_HANDLE or similar result codes.
     FMOD::Channel* channel = nullptr;
 
+    // Sound data being played.
+    FMOD::Sound* sound = nullptr;
+    
     // Callback to execute when sound finishes playing (either naturally or via stop).
     std::function<void()> mFinishCallback;
 
     // The frame this sound started on.
-    uint32 mStartFrame = 0;
+    uint32_t mStartFrame = 0;
 };
 
 struct AudioSaveState
@@ -56,10 +58,10 @@ struct AudioSaveState
 
 enum class AudioType
 {
-    SFX,        // Audio plays on SFX channel
-    VO,         // Audio plays on VO channel
-    Ambient,    // Audio plays on Ambient channels and crossfades between scenes
-    Music       // Audio plays on Music channels and crossfades between scenes
+    SFX,        // Audio plays on SFX channels
+    VO,         // Audio plays on VO channels
+    Ambient,    // Audio plays on Ambient channels
+    Music       // Audio plays on Music channels
 };
 
 // Handles fading in/out audio volume.
@@ -97,35 +99,58 @@ struct Crossfader
     FMOD::ChannelGroup* GetActive() const { return faderChannelGroups[fadeIndex]; }
 };
 
+struct PlayAudioParams
+{
+    // The audio file to play.
+    Audio* audio = nullptr;
+
+    // The type of audio. This indirectly controls volume based on player preferences.
+    AudioType audioType = AudioType::SFX;
+
+    // The amount of time to fade in the sound. Zero means no fade-in.
+    float fadeInTime = 0.0f;
+
+    // The volume to play the audio at, from 0.0f (0%) to 1.0f (100%).
+    float volume = 1.0f;
+
+    // Number of times to loop.
+    // -1 = loop forever, 0 = no loop, 1+ = loop X many times
+    int loopCount = 0;
+
+    // Called when the sound finishes playing.
+    std::function<void()> finishCallback = nullptr;
+
+    // Should we play this as a 3D sound?
+    bool is3d = false;
+
+    // For 3D positional audio, the point the audio plays from.
+    Vector3 position;
+
+    // For 3D positional audio, the distances from which the sound is audible.
+    // Sound will be loudest at min dist, quietest at max dist.
+    // Negative values will use the defaults.
+    float minDist = -1.0f;
+    float maxDist = -1.0f;
+};
+
 class AudioManager
 {
 public:
-    // If calling code doesn't provide specific min/max 3D dists, we'll use these.
-    //TODO: values are pulled from GAME.CFG; maybe we should read in that file.
-    static constexpr float kDefault3DMinDist = 200.0f;
-    static constexpr float kDefault3DMaxDist = 2000.0f;
-    
     bool Initialize();
     void Shutdown();
     
     void Update(float deltaTime);
     void UpdateListener(const Vector3& position, const Vector3& velocity, const Vector3& forward, const Vector3& up);
-    
-    PlayingSoundHandle PlaySFX(Audio* audio, std::function<void()> finishCallback = nullptr);
-    PlayingSoundHandle PlaySFX3D(Audio* audio, const Vector3& position, float minDist = kDefault3DMinDist, float maxDist = kDefault3DMaxDist);
-    
-    PlayingSoundHandle PlayVO(Audio* audio);
-    PlayingSoundHandle PlayVO3D(Audio* audio, const Vector3& position, float minDist = kDefault3DMinDist, float maxDist = kDefault3DMaxDist);
-    
-    PlayingSoundHandle PlayAmbient(Audio* audio, float fadeInTime = 0.0f);
-    PlayingSoundHandle PlayAmbient3D(Audio* audio, const Vector3& position, float minDist = kDefault3DMinDist, float maxDist = kDefault3DMaxDist);
 
-    PlayingSoundHandle PlayMusic(Audio* audio, float fadeInTime = 0.0f);
+    PlayingSoundHandle Play(const PlayAudioParams& params);
+    PlayingSoundHandle PlaySFX(Audio* audio, std::function<void()> finishCallback = nullptr);
 
     void Stop(Audio* audio);
     void Stop(PlayingSoundHandle& soundHandle, float fadeOutTime = 0.0f);
     void StopAll();
-    void StopOnOrAfterFrame(uint32 frame);
+    void StopOnOrAfterFrame(uint32_t frame);
+
+    void ReleaseAudioData(Audio* audio);
 
     void SetMasterVolume(float volume);
     float GetMasterVolume() const;
@@ -166,20 +191,32 @@ private:
     // Volume multipliers for each audio type. This changes the range of possible volumes for a particular type of audio.
     // For example, if 0.8 is used, it means that "max volume" for that audio type is actually 80% of the "true max".
     // This is just helpful for achieving a good sounding mix. In particular, music tends to overpower SFX/VO, so compensate for that.
-    const float kSFXVolumeMultiplier = 1.0f;
+    const float kSFXVolumeMultiplier = 0.6f;
     const float kVOVolumeMultiplier = 1.0f;
     const float kAmbientVolumeMultiplier = 1.0f;
-    const float kMusicVolumeMultiplier = 0.75f;
+    const float kMusicVolumeMultiplier = 0.6f;
+
+    // Default min/max distances for 3D sound volumes.
+    // If calling code doesn't provide specific min/max 3D dists, we'll use these.
+    float mDefault3DMinDist = 200.0f;
+    float mDefault3DMaxDist = 2000.0f;
     
     // Sounds that are currently playing.
     std::vector<PlayingSoundHandle> mPlayingSounds;
-    PlayingSoundHandle mInvalidSoundHandle;
+
+    // Mapping from Audio assets to FMOD's internal sound instances.
+    // This mapping stops us from creating multiple FMOD sounds for a single Audio (essentially a memory leak).
+    std::unordered_map<Audio*, FMOD::Sound*> mFmodAudioData;
+
+    // When an Audio asset is deleted, we want to release the underlying FMOD sound data too.
+    // However, if the sound is still playing, we don't want to release until it ends or stops.
+    std::vector<FMOD::Sound*> mWaitingToRelease;
     
-    FMOD::ChannelGroup* GetChannelGroupForAudioType(AudioType audioType, bool forVolume) const;
+    FMOD::Sound* CreateSound(Audio* audio, AudioType audioType, bool is3D, bool isLooping);
+    void DestroySound(FMOD::Sound* sound);
 
-    PlayingSoundHandle& CreateAndPlaySound2D(Audio* audio, AudioType audioType);
-    PlayingSoundHandle& CreateAndPlaySound3D(Audio* audio, AudioType audioType, const Vector3& position, float minDist, float maxDist);
-
-    FMOD::Sound* CreateSound(Audio* audio, bool is3D);
+    FMOD::ChannelGroup* GetChannelGroupForAudioType(AudioType audioType) const;
     FMOD::Channel* CreateChannel(FMOD::Sound* sound, FMOD::ChannelGroup* channelGroup);
 };
+
+extern AudioManager gAudioManager;

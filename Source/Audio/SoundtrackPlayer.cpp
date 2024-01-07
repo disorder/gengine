@@ -1,7 +1,7 @@
 #include "SoundtrackPlayer.h"
 
 #include "ActionManager.h"
-#include "Services.h"
+#include "GKActor.h"
 #include "StringUtil.h"
 
 PlayingSoundtrack::PlayingSoundtrack(Soundtrack* soundtrack) :
@@ -13,10 +13,8 @@ PlayingSoundtrack::PlayingSoundtrack(Soundtrack* soundtrack) :
 void PlayingSoundtrack::Play()
 {
     // Make sure all nodes are reset.
-    for(auto& node : mSoundtrack->GetNodes())
-    {
-        mExecutionCounts.push_back(0);
-    }
+    mExecutionCounts.clear();
+    mExecutionCounts.resize(mSoundtrack->GetNodes().size());
 
     // Get things rolling.
     ProcessNextNode();
@@ -37,6 +35,19 @@ void PlayingSoundtrack::Stop()
 
 void PlayingSoundtrack::Update(float deltaTime)
 {
+    // If the previous node designated a follow object, keep the playing sound's 3D position updated to "follow" that object.
+    if(mSoundtrackNodeResults.followObj != nullptr)
+    {
+        mSoundtrackNodeResults.soundHandle.SetPosition(mSoundtrackNodeResults.followObj->GetAudioPosition());
+    }
+
+    // If the current node is looping, we can early out - there is NO way to advance past a looping node.
+    // The actual looping behavior is controlled by the audio system.
+    if(mCurrentNodeIndex >= 0 && mSoundtrack->GetNodes()[mCurrentNodeIndex]->IsLooping())
+    {
+        return;
+    }
+
     // Decrement timer. When it gets to zero, we move onto the next node.
     if(mTimer >= 0.0f)
     {
@@ -58,13 +69,6 @@ void PlayingSoundtrack::ProcessNextNode()
         return;
     }
 
-    // First off, if current node is looping...just keep doing it! It never stops!
-    if(mCurrentNodeIndex >= 0 && nodes[mCurrentNodeIndex]->IsLooping())
-    {
-        mTimer = nodes[mCurrentNodeIndex]->Execute(mSoundtrack->GetSoundType(), mSoundtrackNodeResults);
-        return;
-    }
-
     // Update the node index and loop if necessary.
     mCurrentNodeIndex++;
     mCurrentNodeIndex %= nodes.size();
@@ -82,7 +86,7 @@ void PlayingSoundtrack::ProcessNextNode()
 
     // Ok, execute the thing.
     mExecutionCounts[mCurrentNodeIndex]++;
-    int waitMilliseconds = node->Execute(mSoundtrack->GetSoundType(), mSoundtrackNodeResults);
+    int waitMilliseconds = node->Execute(mSoundtrack, mSoundtrackNodeResults);
     mTimer = (float)waitMilliseconds / 1000.0f;
 }
 
@@ -157,7 +161,7 @@ void SoundtrackPlayer::Stop(const std::string& soundtrackName)
 void SoundtrackPlayer::StopAll()
 {
     // Stop all playing soundtracks.
-    for(auto& playing : mPlaying)
+    for(PlayingSoundtrack& playing : mPlaying)
     {
         playing.Stop();
     }
@@ -166,9 +170,9 @@ void SoundtrackPlayer::StopAll()
 
 void SoundtrackPlayer::OnUpdate(float deltaTime)
 {
-    if(Services::Get<ActionManager>()->IsSkippingCurrentAction()) { return; }
+    if(gActionManager.IsSkippingCurrentAction()) { return; }
 
-    for(auto& playing : mPlaying)
+    for(PlayingSoundtrack& playing : mPlaying)
     {
         playing.Update(deltaTime);
     }

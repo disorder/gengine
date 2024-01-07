@@ -2,16 +2,16 @@
 
 #include <fstream>
 
-#include "BuildEnv.h"
-#include "Platform.h"
+#include "StringUtil.h"
 
-#if defined(PLATFORM_UNIX)
-#include <dirent.h>
-#elif defined(PLATFORM_MAC)
+#if defined(PLATFORM_MAC)
 #include <CoreFoundation/CoreFoundation.h>
-#include <dirent.h>
 #elif defined(PLATFORM_WINDOWS)
 #include <Windows.h>
+#endif
+
+#if defined(HAVE_DIRENT_H)
+#include <dirent.h>
 #endif
 
 #if defined(HAVE_STAT_H)
@@ -150,119 +150,159 @@ std::string Path::GetFileNameNoExtension(const std::string& path)
 	return filename.substr(0, pos);
 }
 
-bool Path::HasExtension(const std::string& path)
+bool Path::HasExtension(const std::string& path, const std::string& expectedExtension)
 {
     // If empty, no extension.
     if(path.empty()) { return false; }
-    
-    // Find last dot in path.
-    size_t lastExtensionPos = path.find_last_of('.');
-    
-    // No period in the string? Guess we have no extension.
-    if(lastExtensionPos == std::string::npos)
+
+    // Having an expected extension can actually make this easier.
+    // Just make sure the path ends with the expected extension.
+    if(!expectedExtension.empty())
     {
-        return false;
+        // If the expected extension includes the dot, just make sure the path ends with this extension.
+        if(expectedExtension[0] == '.')
+        {
+            return StringUtil::EndsWithIgnoreCase(path, expectedExtension);
+        }
+        else // expected extension doesn't include a dot
+        {
+            // We still need the path to end with the expected extension.
+            // However, we also need to verify that the character before the expected extension is a dot in the path!
+            return path.size() > expectedExtension.size() &&
+                path[path.size() - expectedExtension.size() - 1] == '.' &&
+                StringUtil::EndsWithIgnoreCase(path, expectedExtension);
+        }        
     }
-    
-    // Need to make sure last '.' is in the last part of the path.
-    // "Assets/Foo.proj/Blah" is not considered to have an extension, for example.
-    size_t lastSeparatorPos = path.find_last_of(kSeparator);
-    
-    // We definitely have an extension period in the path to get here.
-    // So, if no separator exists, an extension exists. Or, if last separate is before extension period, an extension exists.
-    return lastSeparatorPos == std::string::npos || lastSeparatorPos < lastExtensionPos;
+    else // No expected extension - we just need to verify ANY extension is present.
+    {
+        // Find last dot in path.
+        size_t lastExtensionPos = path.find_last_of('.');
+
+        // No period in the string? Guess we have no extension.
+        if(lastExtensionPos == std::string::npos)
+        {
+            return false;
+        }
+
+         // Need to make sure last '.' is in the last part of the path.
+        // "Assets/Foo.proj/Blah" is not considered to have an extension, for example.
+        size_t lastSeparatorPos = path.find_last_of(kSeparator);
+
+        // We definitely have an extension period in the path to get here.
+        // So, if no separator exists, an extension exists. Or, if last separator is before extension period, an extension exists.
+        return (lastSeparatorPos == std::string::npos || lastSeparatorPos < lastExtensionPos);
+    }
 }
 
 bool Directory::Exists(const std::string& path)
 {
-    #if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
-	DIR* directoryStream = opendir(path.c_str());
-	if(directoryStream == nullptr)
-	{
-		//TODO: Detect whether the directory doesn't exist, or an error occurred.
-		//TODO: If an error occurred, we don't know for sure whether the directory exists or not.
-		return false;
-	}
-	closedir(directoryStream);
-	return true;
-    #elif defined(PLATFORM_WINDOWS)
-	DWORD fileAttributes = GetFileAttributesA(path.c_str());
+    #if defined(PLATFORM_WINDOWS)
+    {
+        DWORD fileAttributes = GetFileAttributesA(path.c_str());
 
-	// In this case, the provided path might be malformed.
-	if(fileAttributes == INVALID_FILE_ATTRIBUTES) { return false; }
+        // In this case, the provided path might be malformed.
+        if(fileAttributes == INVALID_FILE_ATTRIBUTES) { return false; }
 
-	// If attribute has directory flag, it is a directory and it does exist!
-	if((fileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) { return true; }
+        // If attribute has directory flag, it is a directory and it does exist!
+        if((fileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) { return true; }
 
-	// This is not a directory.
-	return false;
+        // This is not a directory.
+        return false;
+    }
+    #elif defined(HAVE_DIRENT_H)
+    {
+        DIR* directoryStream = opendir(path.c_str());
+        if(directoryStream == nullptr)
+        {
+            //TODO: Detect whether the directory doesn't exist, or an error occurred.
+            //TODO: If an error occurred, we don't know for sure whether the directory exists or not.
+            return false;
+        }
+        closedir(directoryStream);
+        return true;
+    }
+    #else
+        #error "No implementation for Directory::Exists!"
     #endif
 }
 
 bool Directory::Create(const std::string& path)
 {
-    #if defined(PLATFORM_MAC) or defined(PLATFORM_UNIX)
-	// Makes the directory with Read/Write/Execute permissions for User and Group, Read/Execute for Other.
-	const int result = mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    #if defined(PLATFORM_WINDOWS)
+    {
+        // Make the directory.
+        bool result = CreateDirectory(path.c_str(), NULL);
 
-	// A non-zero result indicates an error.
-	if(result != 0)
-	{
-		// If error is that directory already exists...great, wonderful, ok!
-		if(errno == EEXIST) { return true; }
+        // A false result indicates an error.
+        if(!result)
+        {
+            // If error is that directory already exists...great, wonderful, ok!
+            if(GetLastError() == ERROR_ALREADY_EXISTS) { return true; }
 
-		// Some error occurred.
-		std::cout << "Failed to make directory at " << path << std::endl;
-		return false;
-	}
-	return true;
-    #elif defined (PLATFORM_WINDOWS)
-	// Make the directory.
-	bool result = CreateDirectory(path.c_str(), NULL);
+            // Some error occurred.
+            std::cout << "Failed to make directory at " << path << std::endl;
+            return false;
+        }
+        return true;
+    }
+    #elif defined(HAVE_STAT_H)
+    {
+        // Makes the directory with Read/Write/Execute permissions for User and Group, Read/Execute for Other.
+        const int result = mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
-	// A false result indicates an error.
-	if(!result)
-	{
-		// If error is that directory already exists...great, wonderful, ok!
-		if(GetLastError() == ERROR_ALREADY_EXISTS) { return true; }
+        // A non-zero result indicates an error.
+        if(result != 0)
+        {
+            // If error is that directory already exists...great, wonderful, ok!
+            if(errno == EEXIST) { return true; }
 
-		// Some error occurred.
-		std::cout << "Failed to make directory at " << path << std::endl;
-		return false;
-	}
-	return true;
+            // Some error occurred.
+            std::cout << "Failed to make directory at " << path << std::endl;
+            return false;
+        }
+        return true;
+    }
+    #else
+        #error "No implementation for Directory::Create!"
+        return false;
     #endif
 }
 
-int64 File::Size(const std::string& filePath)
+uint64_t File::Size(const std::string& filePath)
 {
     #if defined(PLATFORM_WINDOWS)
-    // Use Windows function to get attributes and return size.
-    WIN32_FILE_ATTRIBUTE_DATA file_attr_data;
-    if(GetFileAttributesEx(filePath.c_str(), GetFileExInfoStandard, &file_attr_data))
     {
-        // For compatibility reasons, the size is stored as two 32-bit ints, but it's meant to represent a 64-bit int.
-        // Can use the LARGE_INTEGER struct to convert to int64.
-        LARGE_INTEGER fileSize = { 0 };
-        fileSize.LowPart = file_attr_data.nFileSizeLow;
-        fileSize.HighPart = file_attr_data.nFileSizeHigh;
-        return fileSize.QuadPart;
+        // Use Windows function to get attributes and return size.
+        WIN32_FILE_ATTRIBUTE_DATA file_attr_data;
+        if(GetFileAttributesEx(filePath.c_str(), GetFileExInfoStandard, &file_attr_data))
+        {
+            // For compatibility reasons, the size is stored as two 32-bit ints, but it's meant to represent a 64-bit int.
+            // Can use the LARGE_INTEGER struct to convert to int64.
+            ULARGE_INTEGER fileSize = { 0 };
+            fileSize.LowPart = file_attr_data.nFileSizeLow;
+            fileSize.HighPart = file_attr_data.nFileSizeHigh;
+            return fileSize.QuadPart;
+        }
+    }
+    #elif defined(HAVE_STAT_H)
+    {
+        // This should work on Mac/Linux. (it may even work on Windows, depending on version)
+        struct stat stat_buf;
+        int rc = stat(filePath.c_str(), &stat_buf);
+        if(rc == 0)
+        {
+            return stat_buf.st_size;
+        }
     }
     #else
-    // This should work on Mac/Linux. (it may even work on Windows, depending on version)
-    struct stat stat_buf;
-    int rc = stat(filePath.c_str(), &stat_buf);
-    if(rc == 0)
-    {
-        return stat_buf.st_size;
-    }
+        #error "No implementation for File::Size!"
     #endif
 
     // Failed to get size, so just return 0.
     return 0;
 }
 
-char* File::ReadIntoBuffer(const std::string& filePath, uint32& outBufferSize)
+uint8_t* File::ReadIntoBuffer(const std::string& filePath, uint32_t& outBufferSize)
 {
     // Open the file, or error if failed.
     std::ifstream file(filePath, std::iostream::in | std::iostream::binary);
@@ -273,12 +313,12 @@ char* File::ReadIntoBuffer(const std::string& filePath, uint32& outBufferSize)
     }
 
     // Get size of file, so we can make a buffer for its contents.
-    int64 size = File::Size(filePath);
+    uint64_t size = File::Size(filePath);
 
     // Create buffer and read in data.
     // This may be a binary or text asset. But to be on the safe side, let's stick a null terminator on there.
-    char* buffer = new char[size + 1];
-    file.read(buffer, size);
+    uint8_t* buffer = new uint8_t[size + 1];
+    file.read(reinterpret_cast<char*>(buffer), size);
     buffer[size] = '\0';
 
     // Pass out buffer size and return buffer.

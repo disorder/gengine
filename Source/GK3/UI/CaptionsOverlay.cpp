@@ -1,5 +1,6 @@
 #include "CaptionsOverlay.h"
 
+#include "AssetManager.h"
 #include "Font.h"
 #include "IniParser.h"
 #include "SaveManager.h"
@@ -40,7 +41,7 @@ CaptionsOverlay::CaptionsOverlay() : Actor(TransformType::RectTransform)
     rectTransform->SetAnchorMax(Vector2::One);
 
     // Load font data.
-    TextAsset* fontColors = Services::GetAssets()->LoadText("FONTCOLOR.TXT");
+    TextAsset* fontColors = gAssetManager.LoadText("FONTCOLOR.TXT", AssetScope::Manual);
     {
         IniParser parser(fontColors->GetText(), fontColors->GetTextLength());
         parser.ParseAll();
@@ -52,16 +53,40 @@ CaptionsOverlay::CaptionsOverlay() : Actor(TransformType::RectTransform)
             {
                 if(StringUtil::EqualsIgnoreCase(entry.key, "NOTLISTED"))
                 {
-                    mDefaultFont = Services::GetAssets()->LoadFont("F_" + entry.value);
+                    mDefaultFont = gAssetManager.LoadFont("F_" + entry.value);
                 }
                 else
                 {
-                    mSpeakerToFont[entry.key] = Services::GetAssets()->LoadFont("F_" + entry.value);
+                    mSpeakerToFont[entry.key] = gAssetManager.LoadFont("F_" + entry.value);
                 }
             }
         }
     }
-    Services::GetAssets()->UnloadText(fontColors);
+    delete fontColors;
+
+    /*
+    {
+        Actor* actor = new Actor(TransformType::RectTransform);
+        actor->GetTransform()->SetParent(GetTransform());
+
+        // Add backing image. This is just a fully opaque black background.
+        UIImage* backing = actor->AddComponent<UIImage>();
+        backing->SetTexture(&Texture::Black);
+
+        // Add label. This should fill space horizontally, with horizontal centering, top alignment.
+        UILabel* label = actor->AddComponent<UILabel>();
+        label->SetHorizonalAlignment(HorizontalAlignment::Center);
+        label->SetHorizontalOverflow(HorizontalOverflow::Wrap);
+        label->SetVerticalAlignment(VerticalAlignment::Top);
+        label->SetFont(mDefaultFont);
+
+        // The caption should stretch to fill horizontal screen space.
+        // But vertically, it is anchored to the bottom of the screen.
+        RectTransform* rt = label->GetRectTransform();
+
+        label->SetText("Non, Monsieur, but most of the guests arrive last night, Oui?  And I was . . . Excusez-moi . . . not on duty.   We have a number of gentlemen staying at the hotel.  As to their luggage, I cannot say.");
+    }
+    */
 }
 
 void CaptionsOverlay::AddCaption(const std::string& captionText, const std::string& speaker)
@@ -84,13 +109,14 @@ void CaptionsOverlay::AddCaption(const std::string& captionText, const std::stri
         caption.label = caption.actor->AddComponent<UILabel>();
         caption.label->SetHorizonalAlignment(HorizontalAlignment::Center);
         caption.label->SetHorizontalOverflow(HorizontalOverflow::Wrap);
-        caption.label->SetVerticalAlignment(VerticalAlignment::Top);
+        caption.label->SetVerticalAlignment(VerticalAlignment::Bottom);
 
         // The caption should stretch to fill horizontal screen space.
         // But vertically, it is anchored to the bottom of the screen.
         RectTransform* rt = caption.backing->GetRectTransform();
         rt->SetAnchorMin(Vector2::Zero);
         rt->SetAnchorMax(Vector2(1.0f, 0.0f));
+        rt->SetSizeDelta(0.0f, 0.0f);
         rt->SetPivot(0.5f, 0.0f); // Pivot at bottom-center.
         rt->SetAnchoredPosition(0.0f, 0.0f);
     }
@@ -127,11 +153,12 @@ void CaptionsOverlay::AddCaption(const std::string& captionText, const std::stri
     // Set font based on speaker.
     caption.label->SetFont(font);
 
-    // Set caption rect height based on font used and amount of text lines needed.
-    caption.backing->GetRectTransform()->SetSizeDeltaY(font->GetGlyphHeight());
-
     // Set text.
     caption.label->SetText(captionText);
+
+    // Set caption rect height based on font used and amount of text lines needed.
+    float height = static_cast<float>(font->GetGlyphHeight() * caption.label->GetLineCount());
+    caption.backing->GetRectTransform()->SetSizeDeltaY(height);
 
     // Add to active captions.
     mActiveCaptions.push_back(caption);

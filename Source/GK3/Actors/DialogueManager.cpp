@@ -3,14 +3,14 @@
 #include <cctype>
 
 #include "ActionManager.h"
+#include "AssetManager.h"
 #include "Animation.h"
 #include "Animator.h"
-#include "GEngine.h"
+#include "GameCamera.h"
 #include "GKActor.h"
-#include "Scene.h"
-#include "Services.h"
+#include "SceneManager.h"
 
-TYPE_DEF_BASE(DialogueManager);
+DialogueManager gDialogueManager;
 
 void DialogueManager::StartDialogue(const std::string& licensePlate, int numLines, bool playFidgets, std::function<void()> finishCallback)
 {
@@ -89,7 +89,7 @@ void DialogueManager::SetSpeaker(const std::string& noun)
     bool isUnknownSpeaker = StringUtil::EqualsIgnoreCase(mSpeaker, "UNKNOWN");
 	if(!mSpeaker.empty() && !isUnknownSpeaker && mDialogueUsesFidgets)
 	{
-		GKActor* actor = GEngine::Instance()->GetScene()->GetActorByNoun(mSpeaker);
+		GKActor* actor = gSceneManager.GetScene()->GetActorByNoun(mSpeaker);
 		if(actor != nullptr)
 		{
 			actor->StartFidget(GKActor::FidgetType::Listen);
@@ -102,7 +102,7 @@ void DialogueManager::SetSpeaker(const std::string& noun)
 	// Have the new speaker play talk animation.
 	if(mDialogueUsesFidgets && !isUnknownSpeaker)
 	{
-		GKActor* actor = GEngine::Instance()->GetScene()->GetActorByNoun(mSpeaker);
+		GKActor* actor = gSceneManager.GetScene()->GetActorByNoun(mSpeaker);
 		if(actor != nullptr)
 		{
 			actor->StartFidget(GKActor::FidgetType::Talk);
@@ -121,7 +121,10 @@ void DialogueManager::SetConversation(const std::string& conversation, std::func
 
     // See if there are any dialogue cameras associated with starting this conversation (isInitial = true).
     // If so, set that camera angle.
-    GEngine::Instance()->GetScene()->SetCameraPositionForConversation(conversation, true);
+    if(GameCamera::AreCinematicsEnabled())
+    {
+        gSceneManager.GetScene()->SetCameraPositionForConversation(conversation, true);
+    }
 
     // Clear any previously saved fidgets.
     mSavedTalkFidgets.clear();
@@ -131,13 +134,13 @@ void DialogueManager::SetConversation(const std::string& conversation, std::func
     // Some actors may use different talk/listen GAS for particular conversations.
     // And some actors may need to play enter anims when starting a conversation.
     mConversationAnimWaitCount = 0;
-    std::vector<const SceneConversation*> conversationSettings = GEngine::Instance()->GetScene()->GetSceneData()->GetConversationSettings(conversation);
+    std::vector<const SceneConversation*> conversationSettings = gSceneManager.GetScene()->GetSceneData()->GetConversationSettings(conversation);
     for(auto& settings : conversationSettings)
     {
         // If needed, set new GAS for actor.
         if(settings->talkGas != nullptr || settings->listenGas != nullptr)
         {
-            GKActor* actor = GEngine::Instance()->GetScene()->GetActorByNoun(settings->actorName);
+            GKActor* actor = gSceneManager.GetScene()->GetActorByNoun(settings->actorName);
             if(actor != nullptr)
             {
                 if(settings->talkGas != nullptr)
@@ -166,7 +169,7 @@ void DialogueManager::SetConversation(const std::string& conversation, std::func
         if(settings->enterAnim != nullptr)
         {
             ++mConversationAnimWaitCount;
-            GEngine::Instance()->GetScene()->GetAnimator()->Start(settings->enterAnim, [this]() {
+            gSceneManager.GetScene()->GetAnimator()->Start(settings->enterAnim, [this]() {
                 --mConversationAnimWaitCount;
                 CheckConversationAnimFinishCallback();
             });
@@ -194,7 +197,10 @@ void DialogueManager::EndConversation(std::function<void()> finishCallback)
 
     // See if there are any dialogue cameras associated with ending this conversation (isFinal = true).
     // If so, set that camera angle.
-    GEngine::Instance()->GetScene()->SetCameraPositionForConversation(mConversation, false);
+    if(GameCamera::AreCinematicsEnabled())
+    {
+        gSceneManager.GetScene()->SetCameraPositionForConversation(mConversation, false);
+    }
 
     // Revert any fidgets that were set when entering the conversation.
     for(auto& pair : mSavedTalkFidgets)
@@ -210,14 +216,14 @@ void DialogueManager::EndConversation(std::function<void()> finishCallback)
 
     // Play any exit anims for actors in this conversation.
     mConversationAnimWaitCount = 0;
-    std::vector<const SceneConversation*> conversationSettings = GEngine::Instance()->GetScene()->GetSceneData()->GetConversationSettings(mConversation);
+    std::vector<const SceneConversation*> conversationSettings = gSceneManager.GetScene()->GetSceneData()->GetConversationSettings(mConversation);
     for(auto& settings : conversationSettings)
     {
         // Play exit anim.
         if(settings->exitAnim != nullptr)
         {
             ++mConversationAnimWaitCount;
-            GEngine::Instance()->GetScene()->GetAnimator()->Start(settings->exitAnim, [this]() {
+            gSceneManager.GetScene()->GetAnimator()->Start(settings->exitAnim, [this]() {
                 --mConversationAnimWaitCount;
                 CheckConversationAnimFinishCallback();
             });
@@ -226,7 +232,7 @@ void DialogueManager::EndConversation(std::function<void()> finishCallback)
         // Have the actor go back to their idle fidget.
         // We don't know all participants in a conversation - that data isn't stored in SIF or anything :P
         // But if we have a conversation setting for an actor, at least we know that.
-        GKActor* actor = GEngine::Instance()->GetScene()->GetActorByNoun(settings->actorName);
+        GKActor* actor = gSceneManager.GetScene()->GetActorByNoun(settings->actorName);
         if(actor != nullptr)
         {
             actor->StartFidget(GKActor::FidgetType::Idle);
@@ -247,7 +253,7 @@ void DialogueManager::PlayNextDialogueLine()
 	mRemainingDialogueLines--;
 
     // If we're skipping an action right now, it seems safe (?) to just trigger the dialogue cue and skip loading the YAK entirely.
-    if(Services::Get<ActionManager>()->IsSkippingCurrentAction())
+    if(gActionManager.IsSkippingCurrentAction())
     {
         TriggerDialogueCue();
         return;
@@ -257,18 +263,18 @@ void DialogueManager::PlayNextDialogueLine()
     std::string yakName = "E" + mDialogueLicensePlate;
     if(mDialogueSequenceNumber < 10)
     {
-        yakName += ('0' + mDialogueSequenceNumber);
+        yakName += ('0' + static_cast<char>(mDialogueSequenceNumber));
     }
     else
     {
-        yakName += ('A' + (mDialogueSequenceNumber - 10));
+        yakName += ('A' + static_cast<char>(mDialogueSequenceNumber - 10));
     }
 
     // Increment sequence number.
     mDialogueSequenceNumber++;
 
 	// Load the YAK! If we can't find it for some reason, output an error and move on right away.
-	Animation* yak = Services::GetAssets()->LoadYak(yakName);
+	Animation* yak = gAssetManager.LoadYak(yakName, AssetScope::Scene);
 	if(yak == nullptr)
 	{
 		std::cout << "Could not find YAK called " << yakName << ". Skipping to next dialogue line." << std::endl;
@@ -281,7 +287,7 @@ void DialogueManager::PlayNextDialogueLine()
     AnimParams yakAnimParams;
     yakAnimParams.animation = yak;
     yakAnimParams.isYak = true;
-    GEngine::Instance()->GetScene()->GetAnimator()->Start(yakAnimParams);
+    gSceneManager.GetScene()->GetAnimator()->Start(yakAnimParams);
 }
 
 void DialogueManager::CheckConversationAnimFinishCallback()

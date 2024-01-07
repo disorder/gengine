@@ -8,7 +8,6 @@
 #include <string>
 #include <utility>
 
-#include "Atomics.h"
 #include "StringUtil.h"
 #include "Type.h"
 #include "Vector2.h"
@@ -90,21 +89,21 @@ struct CharacterConfig
 {
 	std::string identifier;
 	
-	int8 headMeshIndex = -1;
+	int8_t headMeshIndex = -1;
 	Vector4 headFov; 			// left, top, right, bottom
 	Vector4 headComfortableFov;
 	
-    int8 hipAxesMeshIndex = -1;
-    int8 hipAxesGroupIndex = -1;
-	int16 hipAxesPointIndex = -1;
+    int8_t hipAxesMeshIndex = -1;
+    int8_t hipAxesGroupIndex = -1;
+	int16_t hipAxesPointIndex = -1;
 	
-    int8 leftShoeAxesMeshIndex = -1;
-    int8 leftShoeAxesGroupIndex = -1;
-    int16 leftShoeAxesPointIndex = -1;
+    int8_t leftShoeAxesMeshIndex = -1;
+    int8_t leftShoeAxesGroupIndex = -1;
+    int16_t leftShoeAxesPointIndex = -1;
 	
-    int8 rightShoeAxesMeshIndex = -1;
-    int8 rightShoeAxesGroupIndex = -1;
-    int16 rightShoeAxesPointIndex = -1;
+    int8_t rightShoeAxesMeshIndex = -1;
+    int8_t rightShoeAxesGroupIndex = -1;
+    int16_t rightShoeAxesPointIndex = -1;
 	
 	float walkerHeight = 72.0f;
 	float shoeThickness = 0.75f;
@@ -114,8 +113,8 @@ struct CharacterConfig
 	Animation* walkStartTurnRightAnim = nullptr;
 	Animation* walkStartTurnLeftAnim = nullptr;
 	
-    uint16 walkStartTurnRightFrame = 0;
-    uint16 walkStartTurnLeftFrame = 0;
+    uint16_t walkStartTurnRightFrame = 0;
+    uint16_t walkStartTurnLeftFrame = 0;
 	
 	Animation* walkLoopAnim = nullptr;
 	Animation* walkStopAnim = nullptr;
@@ -133,10 +132,9 @@ struct CharacterConfig
 
 class CharacterManager
 {
-	TYPE_DECL_BASE();
 public:
-	CharacterManager();
-	
+    void Init();
+
 	CharacterConfig& GetCharacterConfig(const std::string& identifier);
 	
 	bool IsValidName(const std::string& name);
@@ -158,3 +156,5 @@ private:
 	// A default character config, in case you request one that doesn't exist.
 	CharacterConfig mDefaultCharacterConfig;
 };
+
+extern CharacterManager gCharacterManager;

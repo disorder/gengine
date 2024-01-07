@@ -89,6 +89,20 @@ Vector3 IniKeyValue::GetValueAsVector3() const
     std::string firstNum = noBraces.substr(0, firstCommaIndex);
     std::string secondNum = noBraces.substr(firstCommaIndex + 1, secondCommaIndex - firstCommaIndex - 1);
     std::string thirdNum = noBraces.substr(secondCommaIndex + 1, std::string::npos);
+
+    // Handle too many negative signs. Yes, this is actually an issue (e.g. Devil's Armchair).
+    while(firstNum.size() >= 2 && firstNum[0] == '-' && firstNum[1] == '-')
+    {
+        firstNum.erase(0, 1);
+    }
+    while(secondNum.size() >= 2 && secondNum[0] == '-' && secondNum[1] == '-')
+    {
+        secondNum.erase(0, 1);
+    }
+    while(thirdNum.size() >= 2 && thirdNum[0] == '-' && thirdNum[1] == '-')
+    {
+        thirdNum.erase(0, 1);
+    }
     
     // Convert to numbers and return.
     return Vector3(std::stof(firstNum), std::stof(secondNum), std::stof(thirdNum));
@@ -165,10 +179,10 @@ IniParser::IniParser(const char* filePath)
     }
 }
 
-IniParser::IniParser(const char* memory, unsigned int memoryLength)
+IniParser::IniParser(const uint8_t* memory, uint32_t memoryLength)
 {
     // Create stream to read from memory.
-    mStream = new imstream(memory, memoryLength);
+    mStream = new imstream(reinterpret_cast<const char*>(memory), memoryLength);
 }
 
 IniParser::~IniParser()
@@ -248,8 +262,9 @@ bool IniParser::ReadNextSection(IniSection& sectionOut)
     imstream::pos_type currentPos = mStream->tellg();
     
     // Just read the whole file one line at a time...
-	// GetLineSanitized ensures: no line break or tab characters, no whitespace before/after, etc.
+	// GetLineSanitized ensures: no line break or tab characters, no whitespace before/after, removes comments, etc.
     std::string line;
+    bool inBlockComment = false;
     while(StringUtil::GetLineSanitized(*mStream, line))
     {
         // Ignore empty lines.
@@ -258,11 +273,21 @@ bool IniParser::ReadNextSection(IniSection& sectionOut)
             currentPos = mStream->tellg();
             continue;
         }
-        
-        // Ignore comment lines.
-        if(line.length() >= 2 && line[0] == '/' && line[1] == '/')
+
+        // Handle/ignore block comments. Starts with "/*" and ends with "*/".
+        // NOTE: this logic is not perfect (what if block comment starts at end of a valid line? or a valid line exists after an end?).
+        // NOTE: but this might be fine for current needs.
+        if(StringUtil::StartsWith(line, "/*"))
         {
-            currentPos = mStream->tellg();
+            inBlockComment = true;
+            continue;
+        }
+        if(inBlockComment)
+        {
+            if(StringUtil::Contains(line, "*/"))
+            {
+                inBlockComment = false;
+            }
             continue;
         }
 
@@ -358,15 +383,6 @@ bool IniParser::ReadNextSection(IniSection& sectionOut)
                 currentKeyValuePair = line;
                 line.clear();
             }
-			
-			// Trim off any comment on the line.
-			StringUtil::TrimComment(currentKeyValuePair);
-			
-			// Get rid of any rogue tab characters.
-			StringUtil::RemoveAll(currentKeyValuePair, '\t');
-			
-            // Trim any whitespace.
-            StringUtil::Trim(currentKeyValuePair);
             
 			// Build the key/value object, to be filled with data next.
 			iniLine.entries.emplace_back();
@@ -380,16 +396,18 @@ bool IniParser::ReadNextSection(IniSection& sectionOut)
                 keyValue.key = currentKeyValuePair.substr(0, equalsIndex);
                 keyValue.value = currentKeyValuePair.substr(equalsIndex + 1, std::string::npos);
 				
-				// Ooof, we may also have to trim these now...
-				StringUtil::Trim(keyValue.key);
-				StringUtil::Trim(keyValue.value);
+				// If the key/value line had any spaces around the equal sign, we also want to get rid of those after splitting.
+				StringUtil::TrimWhitespace(keyValue.key);
+				StringUtil::TrimWhitespace(keyValue.value);
             }
             else
             {
-                keyValue.key = currentKeyValuePair;
-				
-				// In this case, set "value" to same thing so that we can still use "value" and value getters.
+                // Trim any whitespace from the key/value pair.
+                StringUtil::TrimWhitespace(currentKeyValuePair);
+
+				// In this case, set "key" and "value" to same thing so that we can still use "value" and value getters.
 				//TODO: Seems kind of wasteful - perhaps we can say "use key field only" in this case; may want to augment/change GetValueAsX functions to work with this.
+                keyValue.key = currentKeyValuePair;
                 keyValue.value = currentKeyValuePair;
             }
         }
@@ -410,9 +428,6 @@ bool IniParser::ReadLine()
     {
         // Ignore empty lines.
         if(line.empty()) { continue; }
-        
-        // Ignore comment lines.
-        if(line.length() > 2 && line[0] == '/' && line[1] == '/') { continue; }
         
         // Detect headers and react to them, but don't stop parsing.
         if(line.length() > 2 && line[0] == '[' && line[line.length() - 1] == ']')

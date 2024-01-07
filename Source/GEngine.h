@@ -5,24 +5,7 @@
 // init, running the game loop, shutdown, and some coordination between systems.
 //
 #pragma once
-#include <functional>
-#include <vector>
-
-#include "ActionManager.h"
-#include "Atomics.h"
-#include "AssetManager.h"
-#include "AudioManager.h"
-#include "Console.h"
-#include "CursorManager.h"
-#include "InputManager.h"
-#include "LayerManager.h"
-#include "Renderer.h"
-#include "SheepManager.h"
-#include "ReportManager.h"
-#include "VideoPlayer.h"
-
-class Actor;
-class Scene;
+#include <cstdint>
 
 class GEngine
 {
@@ -39,18 +22,14 @@ public:
 
     void ForceUpdate();
 
-    void AddActor(Actor* actor) { mActors.push_back(actor); }
-    const std::vector<Actor*>& GetActors() const { return mActors; }
-    
-    void LoadScene(const std::string& name, std::function<void()> callback = nullptr);
-    void UnloadScene() { mUnloadScene = true; }
+    uint32_t GetFrameNumber() const { return mFrameNumber; }
 
-    Scene* GetScene() { return mScene; }
-
-    uint32 GetFrameNumber() const { return mFrameNumber; }
+    void SetTimeMultiplier(float multiplier) { mTimeMultiplier = multiplier; }
+    float GetTimeMultiplier() const { return mTimeMultiplier; }
 
     // GK-specific stuff here
-    void StartGame();
+    void StartGame() const;
+    bool IsDemoMode() const { return mDemoMode; }
     
 private:
     // Only one instance of GEngine can exist.
@@ -62,44 +41,20 @@ private:
 
     // Tracks what frame the game is on. First full frame execution is frame 0.
     // Assuming 60FPS, it would take ~800 days for this value to wrap. Not too concerning.
-    uint32 mFrameNumber = 0;
-    
-    // Subsystems.
-    Renderer mRenderer;
-    AudioManager mAudioManager;
-    AssetManager mAssetManager;
-    InputManager mInputManager;
-    SheepManager mSheepManager;
-	ReportManager mReportManager;
-	ActionManager mActionManager;
-	Console mConsole;
-    VideoPlayer mVideoPlayer;
-    LayerManager mLayerManager;
-    CursorManager mCursorManager;
-    
-    // A list of all actors that currently exist in the game.
-    std::vector<Actor*> mActors;
-    
-    // The currently active scene. There can be only one at a time (sure about that?).
-    Scene* mScene = nullptr;
-	
-	// A scene that's been requested to load. If empty, no pending scene change.
-	// Scene loads happen at the end of a frame, to avoid a scene change mid-frame.
-	std::string mSceneToLoad;
+    uint32_t mFrameNumber = 0;
 
-    // If set, we explicitly want to unload the current scene without loading a new scene.
-    bool mUnloadScene = false;
+    // A multiplier to affect how fast the game updates compared to realtime.
+    // Less than 1 makes the game run slower than realtime, more than 1 makes it run faster than realtime.
+    float mTimeMultiplier = 1.0f;
 
-    // Callback to execute when scene load completes.
-    std::function<void()> mSceneLoadedCallback = nullptr;
-	
+    // If true, the game runs as the "demo" version of the game.
+    bool mDemoMode = false;
+
+    void ShowOpeningMovies();
+    void ShowTitleScreen();
+
     void ProcessInput();
     void Update();
     void Update(float deltaTime);
     void GenerateOutputs();
-	
-	void LoadSceneInternal();
-    void UnloadSceneInternal();
-	
-	void DeleteDestroyedActors();
 };

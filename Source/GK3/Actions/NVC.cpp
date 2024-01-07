@@ -1,13 +1,9 @@
 #include "NVC.h"
 
-#include "GKActor.h"
 #include "IniParser.h"
-#include "SheepCompiler.h"
-#include "SheepScript.h"
+#include "SheepManager.h"
 
-/*static*/ std::vector<Action> NVC::mEmptyActions;
-
-NVC::NVC(const std::string& name, char* data, int dataLength) : Asset(name)
+void NVC::Load(uint8_t* data, uint32_t dataLength)
 {
     ParseFromData(data, dataLength);
 }
@@ -17,9 +13,13 @@ const std::vector<Action>& NVC::GetActions(const std::string& noun) const
 	auto it = mNounToActions.find(noun);
 	if(it != mNounToActions.end())
 	{
-		return it->second;
+        return it->second;
 	}
-	return mEmptyActions;
+    else
+    {
+        static std::vector<Action> mEmptyActions;
+        return mEmptyActions;
+    }
 }
 
 std::vector<const Action*> NVC::GetActions(const std::string& noun, const std::string& verb) const
@@ -67,7 +67,7 @@ const Action* NVC::GetAction(const std::string& noun, const std::string& verb) c
 	return nullptr;
 }
 
-void NVC::ParseFromData(char *data, int dataLength)
+void NVC::ParseFromData(uint8_t* data, uint32_t dataLength)
 {
     IniParser parser(data, dataLength);
     parser.ParseAll();
@@ -94,7 +94,7 @@ void NVC::ParseFromData(char *data, int dataLength)
 		action.caseLabel = caseLabel;
         
         // From here, we have some optional stuff.
-		for(int i = 3; i < line.entries.size(); ++i)
+		for(size_t i = 3; i < line.entries.size(); ++i)
 		{
 			IniKeyValue& keyValue = line.entries[i];
 			
@@ -168,7 +168,7 @@ void NVC::ParseFromData(char *data, int dataLength)
 				}
 				
 				// Compile and save script.
-				action.script.script = Services::GetSheep()->Compile("Case Evaluation", action.script.text);
+				action.script.script = gSheepManager.Compile("Case Evaluation", action.script.text);
             }
 		}
 
@@ -190,9 +190,9 @@ void NVC::ParseFromData(char *data, int dataLength)
 	// After all actions have been read in, iterate and save pointers to each in a vector.
 	// When action set will be used, we must iterate all actions to map nouns and verbs.
 	// Perhaps I can make this more efficient at some point...
-	for(auto it = mNounToActions.begin(); it != mNounToActions.end(); it++)
+	for(auto& mNounToAction : mNounToActions)
 	{
-		std::vector<Action>& actions = it->second;
+		std::vector<Action>& actions = mNounToAction.second;
 		for(auto& action : actions)
 		{
 			mActions.push_back(&action);
@@ -220,7 +220,7 @@ void NVC::ParseFromData(char *data, int dataLength)
         {
             SheepScriptAndText caseLogic;
             caseLogic.text = first.value;
-            caseLogic.script = Services::GetSheep()->CompileEval(first.value);
+            caseLogic.script = gSheepManager.CompileEval(first.value);
             mCaseLogic[caseLabel] = caseLogic;
         }
         else

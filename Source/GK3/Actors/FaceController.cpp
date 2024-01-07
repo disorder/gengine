@@ -4,11 +4,12 @@
 
 #include "Animation.h"
 #include "Animator.h"
+#include "AssetManager.h"
 #include "CharacterManager.h"
 #include "Texture.h"
 #include "Random.h"
-#include "Services.h"
-#include "Scene.h"
+#include "ReportManager.h"
+#include "SceneManager.h"
 #include "StringUtil.h"
 
 TYPE_DEF_CHILD(Component, FaceController);
@@ -181,7 +182,7 @@ void FaceController::Blink()
 	}
 	
 	// Play it if you got it!
-	GEngine::Instance()->GetScene()->GetAnimator()->Start(blinkAnim);
+	gSceneManager.GetScene()->GetAnimator()->Start(blinkAnim);
 }
 
 void FaceController::Blink(const std::string& animName)
@@ -194,13 +195,13 @@ void FaceController::Blink(const std::string& animName)
 		{
 			//TODO: This seems to be an AssetManager-level warning?
 			//TODO: So, maybe OG game finds and applies blink anim indescriminantly (which seems not good, tbh).
-			Services::GetReports()->Log("Error", "gk3 animation '" + animName + ".anm' not found.");
+			gReportManager.Log("Error", "gk3 animation '" + animName + ".anm' not found.");
 			//TODO: This also causes a warning OS dialog to appear (in debug, I guess)
 			//TODO: If a non-blink anim is specified, you get a cryptic error about "attempt to apply multiple actions"
 			return;
 		}
 	}
-	GEngine::Instance()->GetScene()->GetAnimator()->Start(blinkAnim);
+	gSceneManager.GetScene()->GetAnimator()->Start(blinkAnim);
 }
 
 void FaceController::SetEyeJitterEnabled(bool enabled)
@@ -231,16 +232,16 @@ void FaceController::DoExpression(const std::string& expression)
 	// Expressions are named as combination of identifier and expression string.
 	// E.g. Gabriel Frown becomes GABFROWN.ANM.
 	std::string animName = mCharacterConfig->faceConfig->identifier + expression;
-	Animation* animation = Services::GetAssets()->LoadAnimation(animName);
+	Animation* animation = gAssetManager.LoadAnimation(animName);
 	if(animation != nullptr)
 	{
-		GEngine::Instance()->GetScene()->GetAnimator()->Start(animation);
+		gSceneManager.GetScene()->GetAnimator()->Start(animation);
 	}
 	else
 	{
 		//TODO: This seems to be an AssetManager-level warning?
 		//TODO: So, maybe OG game finds and applies expression anim indescriminantly (which seems not good, tbh).
-		Services::GetReports()->Log("Error", "gk3 animation '" + animName + ".anm' not found.");
+		gReportManager.Log("Error", "gk3 animation '" + animName + ".anm' not found.");
 	}
 }
 
@@ -250,8 +251,8 @@ void FaceController::SetMood(const std::string& mood)
 	std::string moodOffName = mCharacterConfig->faceConfig->identifier + mood + "off";
 	
 	// Make sure mood animations exist.
-	Animation* enterAnimation = Services::GetAssets()->LoadAnimation(moodOnName);
-	Animation* exitAnimation = Services::GetAssets()->LoadAnimation(moodOffName);
+	Animation* enterAnimation = gAssetManager.LoadAnimation(moodOnName);
+	Animation* exitAnimation = gAssetManager.LoadAnimation(moodOffName);
 	if(enterAnimation == nullptr || exitAnimation == nullptr)
 	{
 		//TODO: Log error?
@@ -264,7 +265,7 @@ void FaceController::SetMood(const std::string& mood)
 	mExitMoodAnimation = exitAnimation;
 	
 	// Play mood on animation.
-	GEngine::Instance()->GetScene()->GetAnimator()->Start(mEnterMoodAnimation);
+	gSceneManager.GetScene()->GetAnimator()->Start(mEnterMoodAnimation);
 }
 
 void FaceController::ClearMood()
@@ -273,7 +274,7 @@ void FaceController::ClearMood()
 	if(mMood.empty()) { return; }
 	
 	// Play mood off animation.
-	GEngine::Instance()->GetScene()->GetAnimator()->Start(mExitMoodAnimation);
+	gSceneManager.GetScene()->GetAnimator()->Start(mExitMoodAnimation);
 	
 	// Clear mood state.
 	mMood.clear();

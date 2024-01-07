@@ -24,12 +24,13 @@ class Texture;
 class Sequence : public Asset
 {
 public:
-    Sequence(const std::string& name, char* data, int dataLength);
+    Sequence(const std::string& name, AssetScope scope) : Asset(name, scope) { }
+    void Load(uint8_t* data, uint32_t dataLength);
 
     int GetFramesPerSecond() const { return mFramesPerSecond; }
 
     int GetTextureCount() { return mTextures.size(); }
-    Texture* GetTexture(int index) { return (index >= 0 && index < mTextures.size()) ? mTextures[index] : nullptr; }
+    Texture* GetTexture(uint32_t index) { return (index < mTextures.size()) ? mTextures[index] : nullptr; }
 
 private:
     int mFramesPerSecond = 15;

@@ -3,7 +3,16 @@
 #include "BinaryReader.h"
 #include "Texture.h"
 
-BSPLightmap::BSPLightmap(const std::string& name, char* data, int dataLength) : Asset(name)
+BSPLightmap::~BSPLightmap()
+{
+    // This class owns the textures created in the constructor, so we must delete them.
+    for(auto& texture : mLightmapTextures)
+    {
+        delete texture;
+    }
+}
+
+void BSPLightmap::Load(uint8_t* data, uint32_t dataLength)
 {
     BinaryReader reader(data, dataLength);
 
@@ -37,14 +46,5 @@ BSPLightmap::BSPLightmap(const std::string& name, char* data, int dataLength) : 
         mLightmapTextures[i]->WriteToFile(GetNameNoExtension() + "_lm_" + std::to_string(i) + ".bmp");
     }
     */
-}
-
-BSPLightmap::~BSPLightmap()
-{
-    // This class owns the textures created in the constructor, so we must delete them.
-    for(auto& texture : mLightmapTextures)
-    {
-        delete texture;
-    }
 }
 

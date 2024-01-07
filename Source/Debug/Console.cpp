@@ -1,8 +1,12 @@
 #include "Console.h"
 
-#include "Services.h"
+#include "LayerManager.h"
+#include "ReportManager.h"
+#include "SheepManager.h"
 #include "SheepScript.h"
 #include "StringUtil.h"
+
+Console gConsole;
 
 void Console::AddToScrollback(const std::string& str)
 {
@@ -16,7 +20,7 @@ void Console::AddToScrollback(const std::string& str)
     // If scrollback is too large, erase old messages to reduce size.
 	if(mScrollback.size() > kMaxScrollbackLength)
 	{
-        int extraCount = static_cast<int>(mScrollback.size()) - kMaxScrollbackLength;
+        uint32_t extraCount = mScrollback.size() - kMaxScrollbackLength;
 		mScrollback.erase(mScrollback.begin(), mScrollback.begin() + extraCount);
 	}
 }
@@ -32,7 +36,7 @@ void Console::ExecuteCommand(const std::string& command)
 	}
 
     // Any console command registered is itself output to the Console log stream...
-	Services::GetReports()->Log("Console", StringUtil::Format("console command: '%s'", command.c_str()));
+	gReportManager.Log("Console", StringUtil::Format("console command: '%s'", command.c_str()));
 	
 	// Modify command to have required syntax.
 	//TODO: Update compiler to accept without braces?
@@ -48,14 +52,15 @@ void Console::ExecuteCommand(const std::string& command)
 	
 	// Compile the sheep from text.
 	std::string scriptName = StringUtil::Format("`Console`:%i", mCommandCounter);
-	SheepScript* sheepScript = Services::GetSheep()->Compile(scriptName, modCommand);
+	SheepScript* sheepScript = gSheepManager.Compile(scriptName, modCommand);
 	
 	// If compiled successfully, execute it!
+    // Execute this as a "Global" sheep (attached to the bottom layer) to avoid it being killed if it pops the top layer.
 	if(sheepScript != nullptr)
 	{
-		Services::GetSheep()->Execute(sheepScript, [sheepScript]() {
+		gSheepManager.Execute(sheepScript, [sheepScript]() {
 			delete sheepScript;
-		});
+		}, gLayerManager.GetBottomLayerName());
 	}
 
     // Add command to history.
@@ -81,11 +86,7 @@ void Console::ExecuteCommand(const std::string& command)
 	mCommandCounter++;
 }
 
-std::string Console::GetCommandFromHistory(int index) const
+const std::string& Console::GetCommandFromHistory(size_t index) const
 {
-	if(index < 0 || index >= static_cast<int>(mCommandHistory.size()))
-	{
-		return "";
-	}
 	return mCommandHistory[index];
 }

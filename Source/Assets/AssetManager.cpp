@@ -6,13 +6,15 @@
 #include <sstream>
 #include <string>
 
-#include "BarnFile.h"
 #include "FileSystem.h"
+#include "Loader.h"
 #include "mstream.h"
-#include "Services.h"
+#include "Renderer.h"
+#include "SheepManager.h"
 #include "StringUtil.h"
+#include "ThreadPool.h"
 
-// Header Includes for all asset types
+// Includes for all asset types
 #include "Animation.h"
 #include "Audio.h"
 #include "BSP.h"
@@ -27,13 +29,14 @@
 #include "SceneInitFile.h"
 #include "Sequence.h"
 #include "Shader.h"
-#include "SheepScript.h"
 #include "Soundtrack.h"
 #include "TextAsset.h"
 #include "Texture.h"
 #include "VertexAnimation.h"
 
-AssetManager::AssetManager()
+AssetManager gAssetManager;
+
+void AssetManager::Init()
 {
     // Load GK3.ini from the root directory so we can bootstrap asset search paths.
     mSearchPaths.push_back("");
@@ -62,36 +65,12 @@ AssetManager::AssetManager()
     mSearchPaths.push_back("Data");
 }
 
-AssetManager::~AssetManager()
+void AssetManager::Shutdown()
 {
-	// All the loaded stuff has to be unloaded!
-    UnloadAssets(mLoadedTexts);
+	// Unload all assets.
+    UnloadAssets(AssetScope::Global);
 
-    UnloadAssets(mLoadedShaders);
-
-    UnloadAssets(mLoadedFonts);
-    UnloadAssets(mLoadedCursors);
-
-	UnloadAssets(mLoadedSheeps);
-
-	UnloadAssets(mLoadedBSPs);
-    UnloadAssets(mLoadedBSPLightmaps);
-	UnloadAssets(mLoadedActionSets);
-	UnloadAssets(mLoadedSceneAssets);
-	UnloadAssets(mLoadedSIFs);
-
-    UnloadAssets(mLoadedSequences);
-	UnloadAssets(mLoadedVertexAnimations);
-	UnloadAssets(mLoadedAnimations);
-	UnloadAssets(mLoadedGases);
-	
-	UnloadAssets(mLoadedTextures);
-	UnloadAssets(mLoadedModels);
-	
-	UnloadAssets(mLoadedYaks);
-	UnloadAssets(mLoadedSoundtracks);
-	UnloadAssets(mLoadedAudios);
-	
+    // Clear all loaded barns.
     mLoadedBarns.clear();
 }
 
@@ -150,7 +129,6 @@ bool AssetManager::LoadBarn(const std::string& barnName)
     std::string assetPath = GetAssetPath(barnName);
     if(assetPath.empty())
     {
-        std::cout << "Barn doesn't exist at any search path." << std::endl;
 		return false;
     }
     
@@ -197,146 +175,141 @@ void AssetManager::WriteAllBarnAssetsToFile(const std::string& search, const std
 	}
 }
 
-Audio* AssetManager::LoadAudio(const std::string& name)
+Audio* AssetManager::LoadAudio(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Audio>(SanitizeAssetName(name, ".WAV"), &mLoadedAudios, nullptr, false);
+    return LoadAsset<Audio>(SanitizeAssetName(name, ".WAV"), scope, &mAudioCache, false);
 }
 
-Soundtrack* AssetManager::LoadSoundtrack(const std::string& name)
+Audio* AssetManager::LoadAudioAsync(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Soundtrack>(SanitizeAssetName(name, ".STK"), &mLoadedSoundtracks);
+    return LoadAssetAsync<Audio>(SanitizeAssetName(name, ".WAV"), scope, &mAudioCache, false);
 }
 
-Animation* AssetManager::LoadYak(const std::string& name)
+Soundtrack* AssetManager::LoadSoundtrack(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Animation>(SanitizeAssetName(name, ".YAK"), &mLoadedYaks);
+    return LoadAsset<Soundtrack>(SanitizeAssetName(name, ".STK"), scope, &mSoundtrackCache);
 }
 
-Model* AssetManager::LoadModel(const std::string& name)
+Animation* AssetManager::LoadYak(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Model>(SanitizeAssetName(name, ".MOD"), &mLoadedModels);
+    return LoadAsset<Animation>(SanitizeAssetName(name, ".YAK"), scope, &mYakCache);
 }
 
-Texture* AssetManager::LoadTexture(const std::string& name)
+Model* AssetManager::LoadModel(const std::string& name, AssetScope scope)
 {
-    // Load texture, attempting to add .BMP extension if asset name has no extension.
-    Texture* texture = LoadAsset<Texture>(SanitizeAssetName(name, ".BMP"), &mLoadedTextures);
-
-    //HACK: If a period exists in the asset name, it can mess up extension adding logic. (Ex: "PREP.HTOP" should resolve to "PREP.HTOP.BMP")
-    //HACK: To fix this, if a texture load fails, try again forcing the BMP extension.
-    if(texture == nullptr)
-    {
-        texture = LoadAsset<Texture>(name + ".BMP", &mLoadedTextures);
-    }
-    return texture;
+    return LoadAsset<Model>(SanitizeAssetName(name, ".MOD"), scope, &mModelCache);
 }
 
-Texture* AssetManager::LoadSceneTexture(const std::string& name)
+Texture* AssetManager::LoadTexture(const std::string& name, AssetScope scope)
+{
+    return LoadAsset<Texture>(SanitizeAssetName(name, ".BMP"), scope, &mTextureCache);     
+}
+
+Texture* AssetManager::LoadTextureAsync(const std::string& name, AssetScope scope)
+{
+    return LoadAssetAsync<Texture>(SanitizeAssetName(name, ".BMP"), scope, &mTextureCache);
+}
+
+Texture* AssetManager::LoadSceneTexture(const std::string& name, AssetScope scope)
 {
     // Load texture per usual.
-    Texture* texture = LoadTexture(name);
+    Texture* texture = LoadTexture(name, scope);
 
     // A "scene" texture means it is rendered as part of the 3D game scene (as opposed to a 2D UI texture).
     // These textures look better if you apply mipmaps and filtering.
     if(texture != nullptr && texture->GetRenderType() != Texture::RenderType::AlphaTest)
     {
-        bool useMipmaps = Services::GetRenderer()->UseMipmaps();
+        bool useMipmaps = gRenderer.UseMipmaps();
         texture->SetMipmaps(useMipmaps);
 
-        bool useTrilinearFiltering = Services::GetRenderer()->UseTrilinearFiltering();
+        bool useTrilinearFiltering = gRenderer.UseTrilinearFiltering();
         texture->SetFilterMode(useTrilinearFiltering ? Texture::FilterMode::Trilinear : Texture::FilterMode::Bilinear);
     }
     return texture;
 }
 
-GAS* AssetManager::LoadGAS(const std::string& name)
+GAS* AssetManager::LoadGAS(const std::string& name, AssetScope scope)
 {
-    return LoadAsset_SeparateLoadFunc<GAS>(SanitizeAssetName(name, ".GAS"), &mLoadedGases);
+    return LoadAsset<GAS>(SanitizeAssetName(name, ".GAS"), scope, &mGasCache);
 }
 
-Animation* AssetManager::LoadAnimation(const std::string& name)
+Animation* AssetManager::LoadAnimation(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Animation>(SanitizeAssetName(name, ".ANM"), &mLoadedAnimations);
+    return LoadAsset<Animation>(SanitizeAssetName(name, ".ANM"), scope, &mAnimationCache);
 }
 
-Animation* AssetManager::LoadMomAnimation(const std::string& name)
+Animation* AssetManager::LoadMomAnimation(const std::string& name, AssetScope scope)
 {
     // GK3 has this notion of a "mother-of-all-animations" file. Thing is, it's nearly identical to a normal .ANM file...
     // Only difference I could find is MOM files support a few more keywords.
     // Anyway, it's all the same thing in my eyes!
-    return LoadAsset<Animation>(SanitizeAssetName(name, ".MOM"), &mLoadedMomAnimations);
+    return LoadAsset<Animation>(SanitizeAssetName(name, ".MOM"), scope, &mMomAnimationCache);
 }
 
-VertexAnimation* AssetManager::LoadVertexAnimation(const std::string& name)
+VertexAnimation* AssetManager::LoadVertexAnimation(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<VertexAnimation>(SanitizeAssetName(name, ".ACT"), &mLoadedVertexAnimations);
+    return LoadAsset<VertexAnimation>(SanitizeAssetName(name, ".ACT"), scope, &mVertexAnimationCache);
 }
 
-Sequence* AssetManager::LoadSequence(const std::string& name)
+Sequence* AssetManager::LoadSequence(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Sequence>(SanitizeAssetName(name, ".SEQ"), &mLoadedSequences);
+    return LoadAsset<Sequence>(SanitizeAssetName(name, ".SEQ"), scope, &mSequenceCache);
 }
 
-SceneInitFile* AssetManager::LoadSIF(const std::string& name)
+SceneInitFile* AssetManager::LoadSIF(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<SceneInitFile>(SanitizeAssetName(name, ".SIF"), &mLoadedSIFs);
+    return LoadAsset<SceneInitFile>(SanitizeAssetName(name, ".SIF"), scope, &mSifCache);
 }
 
-SceneAsset* AssetManager::LoadSceneAsset(const std::string& name)
+SceneAsset* AssetManager::LoadSceneAsset(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<SceneAsset>(SanitizeAssetName(name, ".SCN"), &mLoadedSceneAssets);
+    return LoadAsset<SceneAsset>(SanitizeAssetName(name, ".SCN"), scope, &mSceneAssetCache);
 }
 
-NVC* AssetManager::LoadNVC(const std::string& name)
+NVC* AssetManager::LoadNVC(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<NVC>(SanitizeAssetName(name, ".NVC"), &mLoadedActionSets);
+    return LoadAsset<NVC>(SanitizeAssetName(name, ".NVC"), scope, &mNvcCache);
 }
 
-BSP* AssetManager::LoadBSP(const std::string& name)
+BSP* AssetManager::LoadBSP(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<BSP>(SanitizeAssetName(name, ".BSP"), &mLoadedBSPs);
+    return LoadAsset<BSP>(SanitizeAssetName(name, ".BSP"), scope, &mBspCache);
 }
 
-void AssetManager::UnloadBSP(BSP* bsp)
+BSPLightmap* AssetManager::LoadBSPLightmap(const std::string& name, AssetScope scope)
 {
-    UnloadAsset<BSP>(bsp, &mLoadedBSPs);
+    return LoadAsset<BSPLightmap>(SanitizeAssetName(name, ".MUL"), scope, &mBspLightmapCache);
 }
 
-BSPLightmap* AssetManager::LoadBSPLightmap(const std::string& name)
+SheepScript* AssetManager::LoadSheep(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<BSPLightmap>(SanitizeAssetName(name, ".MUL"), &mLoadedBSPLightmaps);
+    return LoadAsset<SheepScript>(SanitizeAssetName(name, ".SHP"), scope, &mSheepCache);
 }
 
-//TODO: For some reason, on Mac/Clang, when compiling in Release mode, using this as a Lambda with std::function causes a malloc error and crash.
-//TODO: I've converted it to a normal function with a function pointer for now...which seems to work. But why?
-SheepScript* LoadSheepFunc(const std::string& assetName, char* buffer, unsigned int bufferSize)
+Cursor* AssetManager::LoadCursor(const std::string& name, AssetScope scope)
 {
-    // Determine whether this is a binary sheep asset.
-    if(SheepScript::IsSheepDataCompiled(buffer, bufferSize))
-    {
-        return new SheepScript(assetName, buffer, bufferSize);
-    }
-
-    // This doesn't appear to be a binary sheep file, so it might be a text sheep file.
-    // Let's try compiling it on-the-fly!
-    imstream stream(buffer, bufferSize);
-    return Services::GetSheep()->Compile(assetName, stream);
+    return LoadAsset<Cursor>(SanitizeAssetName(name, ".CUR"), scope, &mCursorCache);
 }
 
-SheepScript* AssetManager::LoadSheep(const std::string& name)
+Cursor* AssetManager::LoadCursorAsync(const std::string& name, AssetScope scope)
 {
-    // Sheep assets need more complex/custom creation login, provided in the create callback.
-    return LoadAsset<SheepScript>(SanitizeAssetName(name, ".SHP"), &mLoadedSheeps, &LoadSheepFunc);
+    return LoadAssetAsync<Cursor>(SanitizeAssetName(name, ".CUR"), scope, &mCursorCache);
 }
 
-Cursor* AssetManager::LoadCursor(const std::string& name)
+Font* AssetManager::LoadFont(const std::string& name, AssetScope scope)
 {
-    return LoadAsset<Cursor>(SanitizeAssetName(name, ".CUR"), &mLoadedCursors);
+	return LoadAsset<Font>(SanitizeAssetName(name, ".FON"), scope, &mFontCache);
 }
 
-Font* AssetManager::LoadFont(const std::string& name)
+TextAsset* AssetManager::LoadText(const std::string& name, AssetScope scope)
 {
-	return LoadAsset<Font>(SanitizeAssetName(name, ".FON"), &mLoadedFonts);
+    // Specifically DO NOT delete the asset buffer when creating TextAssets, since they take direct ownership of it.
+    return LoadAsset<TextAsset>(name, scope, &mTextAssetCache, false);
+}
+
+Config* AssetManager::LoadConfig(const std::string& name)
+{
+    return LoadAsset<Config>(SanitizeAssetName(name, ".CFG"), AssetScope::Global, &mConfigCache);
 }
 
 Shader* AssetManager::LoadShader(const std::string& name)
@@ -347,44 +320,65 @@ Shader* AssetManager::LoadShader(const std::string& name)
 
 Shader* AssetManager::LoadShader(const std::string& vertName, const std::string& fragName)
 {
+    // Determine the name of this shader asset.
+    std::string shaderName = vertName;
+    if(StringUtil::EqualsIgnoreCase(vertName, fragName))
+    {
+        shaderName.push_back('_');
+        shaderName += fragName;
+    }
+
     // Return existing shader if already loaded.
-	std::string key = vertName + fragName;
-	auto it = mLoadedShaders.find(key);
-	if(it != mLoadedShaders.end())
-	{
-		return it->second;
-	}
+    Shader* cachedShader = mShaderCache.Get(shaderName);
+    if(cachedShader != nullptr)
+    {
+        return cachedShader;
+    }
 
-    // Get paths for vert/frag shaders.
-	std::string vertFilePath = GetAssetPath(vertName + ".vert");
-	std::string fragFilePath = GetAssetPath(fragName + ".frag");
+    // Ok, we have to actually load this shader...
+    // Load the vertex and fragment shader files from the disk.
+    TextAsset* vertShader = LoadAsset<TextAsset>(vertName + ".vert", AssetScope::Global, &mShaderFileCache, false);
+    TextAsset* fragShader = LoadAsset<TextAsset>(fragName + ".frag", AssetScope::Global, &mShaderFileCache, false);
 
-    // Try to load shader.
-	Shader* shader = new Shader(vertFilePath.c_str(), fragFilePath.c_str());
-	if(shader == nullptr || !shader->IsGood())
-	{
-		return nullptr;
-	}
+    // Create the shader from the text assets.
+    Shader* shader = new Shader(shaderName, vertShader, fragShader);
 	
 	// Cache and return.
-	mLoadedShaders[key] = shader;
+    mShaderCache.Set(shaderName, shader);
 	return shader;
 }
 
-TextAsset* AssetManager::LoadText(const std::string& name)
+void AssetManager::UnloadAssets(AssetScope scope)
 {
-    // Specifically DO NOT delete the asset buffer when creating TextAssets, since they take direct ownership of it.
-    return LoadAsset<TextAsset>(name, &mLoadedTexts, nullptr, false);
-}
+    mShaderCache.Unload(scope);
 
-void AssetManager::UnloadText(TextAsset* text)
-{
-    UnloadAsset<TextAsset>(text, &mLoadedTexts);
-}
+    mConfigCache.Unload(scope);
+    mTextAssetCache.Unload(scope);
 
-Config* AssetManager::LoadConfig(const std::string& name)
-{
-    return LoadAsset<Config>(SanitizeAssetName(name, ".CFG"), &mLoadedConfigs);
+    mFontCache.Unload(scope);
+    mCursorCache.Unload(scope);
+
+    mSheepCache.Unload(scope);
+
+    mBspLightmapCache.Unload(scope);
+    mBspCache.Unload(scope);
+
+    mNvcCache.Unload(scope);
+    mSceneAssetCache.Unload(scope);
+    mSifCache.Unload(scope);
+
+    mSequenceCache.Unload(scope);
+    mVertexAnimationCache.Unload(scope);
+    mMomAnimationCache.Unload(scope);
+    mAnimationCache.Unload(scope);
+    mGasCache.Unload(scope);
+
+    mTextureCache.Unload(scope);
+    mModelCache.Unload(scope);
+
+    mYakCache.Unload(scope);
+    mSoundtrackCache.Unload(scope);
+    mAudioCache.Unload(scope);
 }
 
 BarnFile* AssetManager::GetBarn(const std::string& barnName)
@@ -432,41 +426,58 @@ BarnFile* AssetManager::GetBarnContainingAsset(const std::string& fileName)
 
 std::string AssetManager::SanitizeAssetName(const std::string& assetName, const std::string& expectedExtension)
 {
-    // We want to add the expected extension if no extension already exists on the name.
-    if(!Path::HasExtension(assetName))
+    // If a three-letter extension already exists, accept it and assume the caller knows what they're doing.
+    int lastIndex = assetName.size() - 1;
+    if(lastIndex > 3 && assetName[lastIndex - 3] == '.')
+    {
+        return assetName;
+    }
+
+    // No three-letter extension, add the expected extension.
+    if(!Path::HasExtension(assetName, expectedExtension))
     {
         return assetName + expectedExtension;
     }
     return assetName;
 }
 
-template<class T>
-T* AssetManager::LoadAsset(const std::string& assetName, std::unordered_map_ci<std::string, T*>* cache, T*(*createFunc)(const std::string&, char*, unsigned int), bool deleteBuffer)
+template<typename T>
+T* AssetManager::LoadAsset(const std::string& assetName, AssetScope scope, AssetCache<T>* cache, bool deleteBuffer)
 {
     // If already present in cache, return existing asset right away.
-    if(cache != nullptr)
+    if(cache != nullptr && scope != AssetScope::Manual)
     {
-        auto it = cache->find(assetName);
-        if(it != cache->end())
+        T* cachedAsset = cache->Get(assetName);
+        if(cachedAsset != nullptr)
         {
-            return it->second;
+            // One caveat: if the cached asset has a narrower scope than what's being requested, we must PROMOTE the scope.
+            // For example, a cached asset with SCENE scope being requested at GLOBAL scope must convert to GLOBAL scope.
+            if(cachedAsset->GetScope() == AssetScope::Scene && scope == AssetScope::Global)
+            {
+                cachedAsset->SetScope(AssetScope::Global);
+            }
+            return cachedAsset;
         }
     }
-
+    //printf("Loading asset %s\n", assetName.c_str());
+    
     // Create buffer containing this asset's data. If this fails, the asset doesn't exist, so we can't load it.
-    unsigned int bufferSize = 0;
-    char* buffer = CreateAssetBuffer(assetName, bufferSize);
+    uint32_t bufferSize = 0;
+    uint8_t* buffer = CreateAssetBuffer(assetName, bufferSize);
     if(buffer == nullptr) { return nullptr; }
 
     // Create asset from asset buffer.
     std::string upperName = StringUtil::ToUpperCopy(assetName);
-    T* asset = createFunc != nullptr ? createFunc(upperName, buffer, bufferSize) : new T(upperName, buffer, bufferSize);
-    
-	// Add entry in cache, if we have a cache.
-	if(asset != nullptr && cache != nullptr)
-	{
-		(*cache)[assetName] = asset;
-	}
+    T* asset = new T(upperName, scope);
+
+    // Add entry in cache, if we have a cache.
+    if(asset != nullptr && cache != nullptr && scope != AssetScope::Manual)
+    {
+        cache->Set(assetName, asset);
+    }
+
+    // Load the asset on the main thread.
+    asset->Load(buffer, bufferSize);
 
     // Delete the buffer after use (or it'll leak).
     if(deleteBuffer)
@@ -476,47 +487,79 @@ T* AssetManager::LoadAsset(const std::string& assetName, std::unordered_map_ci<s
 	return asset;
 }
 
-template<class T>
-T* AssetManager::LoadAsset_SeparateLoadFunc(const std::string& assetName, std::unordered_map_ci<std::string, T*>* cache, bool deleteBuffer)
+template<typename T>
+T* AssetManager::LoadAssetAsync(const std::string& assetName, AssetScope scope, AssetCache<T>* cache, bool deleteBuffer, std::function<void(T*)> callback)
 {
+    #if defined(PLATFORM_LINUX)
+    //TEMP(?): Linux doesn't like this multithreading code, and I don't really blame it!
+    //TODO: Revisit async asset loading - probably need to wrap caches in mutexes I'd think? Or some other issue?
+    T* asset = LoadAsset<T>(assetName, scope, cache, deleteBuffer);
+    if(callback != nullptr) { callback(asset); }
+    return asset;
+    #else
     // If already present in cache, return existing asset right away.
-    if(cache != nullptr)
+    if(cache != nullptr && scope != AssetScope::Manual)
     {
-        auto it = cache->find(assetName);
-        if(it != cache->end())
+        T* cachedAsset = cache->Get(assetName);
+        if(cachedAsset != nullptr)
         {
-            return it->second;
+            // One caveat: if the cached asset has a narrower scope than what's being requested, we must PROMOTE the scope.
+            // For example, a cached asset with SCENE scope being requested at GLOBAL scope must convert to GLOBAL scope.
+            if(cachedAsset->GetScope() == AssetScope::Scene && scope == AssetScope::Global)
+            {
+                cachedAsset->SetScope(AssetScope::Global);
+            }
+            return cachedAsset;
         }
     }
+    //printf("Loading asset %s\n", assetName.c_str());
 
-    // Create buffer containing this asset's data. If this fails, the asset doesn't exist, so we can't load it.
-    unsigned int bufferSize = 0;
-    char* buffer = CreateAssetBuffer(assetName, bufferSize);
-    if(buffer == nullptr) { return nullptr; }
-
-    // Create asset.
+    // Create asset from asset buffer.
     std::string upperName = StringUtil::ToUpperCopy(assetName);
-    T* asset = new T(upperName);
+    T* asset = new T(upperName, scope);
 
-    // If there's a cache, put the asset in the cache right away.
-    // Sometimes, assets have circular depedencies, and that'll crash unless we have the item in the cache BEFORE loading!
-    if(cache != nullptr)
+    // Add entry in cache, if we have a cache.
+    //TODO: This inserts the asset into the cache *even if* it is not a valid asset (CreateAssetBuffer returns nullptr).
+    //TODO: Ideally, we shouldn't do this - I guess we need to check if it exists before creating it???
+    if(asset != nullptr && cache != nullptr && scope != AssetScope::Manual)
     {
-        (*cache)[assetName] = asset;
+        cache->Set(assetName, asset);
     }
+    
+    // Load in background.
+    Loader::AddLoadingTask();
+    ThreadPool::AddTask([this, deleteBuffer](void* arg){
+        T* asset = static_cast<T*>(arg);
+        //printf("Loading asset: %s\n", asset->GetName().c_str());
 
-    // Ok, now we can load the asset's data.
-    asset->Load(buffer, bufferSize);
+        // Create buffer containing this asset's data. If this fails, the asset doesn't exist, so we can't load it.
+        uint32_t bufferSize = 0;
+        uint8_t* buffer = CreateAssetBuffer(asset->GetName(), bufferSize);
+        if(buffer == nullptr) { return; }
 
-    // Delete the buffer after use (or it'll leak).
-    if(deleteBuffer)
-    {
-        delete[] buffer;
-    }
+        // Ok, now we can load the asset's data.
+        asset->Load(buffer, bufferSize);
+
+        // Delete the buffer after use (or it'll leak).
+        if(deleteBuffer)
+        {
+            delete[] buffer;
+        }
+    }, asset, [this, asset, callback](){
+        //printf("Loaded asset: %s\n", asset->GetName().c_str());
+        if(callback != nullptr)
+        {
+            callback(asset);
+        }
+        Loader::RemoveLoadingTask();
+    });
+
+    // Return the created asset.
     return asset;
+    #endif
 }
 
-char* AssetManager::CreateAssetBuffer(const std::string& assetName, unsigned int& outBufferSize)
+uint8_t* AssetManager::CreateAssetBuffer(const std::string& assetName, uint32_t& outBufferSize)
 {
 	// First, see if the asset exists at any asset search path.
 	// If so, we load the asset directly from file.
@@ -553,17 +596,4 @@ void AssetManager::UnloadAsset(T* asset, std::unordered_map_ci<std::string, T*>*
 
     // Delete asset.
     delete asset;
-}
-
-template<class T>
-void AssetManager::UnloadAssets(std::unordered_map_ci<std::string, T*>& cache)
-{
-	// Delete all assets in the cache.
-	for(auto& entry : cache)
-	{
-		delete entry.second;
-	}
-	
-	// Clear the cache.
-	cache.clear();
 }

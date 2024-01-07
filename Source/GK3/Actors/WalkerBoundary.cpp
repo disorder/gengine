@@ -131,7 +131,7 @@ void WalkerBoundary::SetUnwalkableRect(const std::string& name, const Rect& worl
 {
     // If this name already exists, we'll update instead of add.
     int index = -1;
-    for(int i = 0; i < mUnwalkableRects.size(); ++i)
+    for(size_t i = 0; i < mUnwalkableRects.size(); ++i)
     {
         if(StringUtil::EqualsIgnoreCase(mUnwalkableRects[i].first, name))
         {
@@ -161,7 +161,7 @@ void WalkerBoundary::SetUnwalkableRect(const std::string& name, const Rect& worl
 void WalkerBoundary::ClearUnwalkableRect(const std::string& name)
 {
     // Find and erase by name.
-    for(int i = 0; i < mUnwalkableRects.size(); ++i)
+    for(size_t i = 0; i < mUnwalkableRects.size(); ++i)
     {
         if(StringUtil::EqualsIgnoreCase(mUnwalkableRects[i].first, name))
         {
@@ -328,8 +328,8 @@ bool WalkerBoundary::FindPathBFS(const Vector2& start, const Vector2& goal, std:
     struct Node
     {
         Vector2 value;
-        Node* parent;
-        bool closed;
+        Node* parent = nullptr;
+        bool closed = false;
     };
 
     // Create set of nodes for searching.
@@ -340,7 +340,6 @@ bool WalkerBoundary::FindPathBFS(const Vector2& start, const Vector2& goal, std:
     int nodeCount = width * height;
 
     Node* nodes = new Node[nodeCount];
-    memset(nodes, 0, nodeCount * sizeof(Node));
     for(int y = 0; y < height; ++y)
     {
         for(int x = 0; x < width; ++x)
