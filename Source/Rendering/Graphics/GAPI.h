@@ -21,8 +21,10 @@ class Vector4;
 typedef void* BufferHandle;
 //typedef void* ShaderHandle;
 #include <stdint.h>
+//typedef uintptr_t TextureHandle;
 typedef uint32_t TextureHandle;
 //typedef uint32_t BufferHandle;
+//typedef uintptr_t ShaderHandle;
 typedef uint32_t ShaderHandle;
 
 class GAPI
